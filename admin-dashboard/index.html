@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Tracker — Admin Dashboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { background: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .fade-in { animation: fadeIn .25s ease; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin .75s linear infinite; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const API = 'https://worker-api-production-3285.up.railway.app';
+function getToken() { return localStorage.getItem('admin_jwt') || ''; }
+async function apiFetch(path, opts = {}) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) };
+  const res = await fetch(API + path, { ...opts, headers });
+  if (!res.ok) { const e = await res.json().catch(() => ({ error: res.statusText })); throw new Error(e.error || res.statusText); }
+  return res.json();
+}
+
+// ── SHARED UI ──────────────────────────────────────────────────────────────
+function Spinner({ size = 'md' }) {
+  const s = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-10 h-10' : 'w-6 h-6';
+  return <div className={`${s} border-2 border-slate-600 border-t-blue-400 rounded-full spinner`} />;
+}
+function Card({ children, className = '' }) {
+  return <div className={`bg-slate-800 border border-slate-700/60 rounded-2xl ${className}`}>{children}</div>;
+}
+function Badge({ children, color = 'gray' }) {
+  const c = { green:'bg-green-900/50 text-green-300 border-green-700/50', red:'bg-red-900/50 text-red-300 border-red-700/50', yellow:'bg-yellow-900/50 text-yellow-300 border-yellow-700/50', blue:'bg-blue-900/50 text-blue-300 border-blue-700/50', purple:'bg-purple-900/50 text-purple-300 border-purple-700/50', gray:'bg-slate-700/50 text-slate-300 border-slate-600/50' };
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${c[color]}`}>{children}</span>;
+}
+function Toast({ msg, type = 'success', onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t); }, []);
+  const c = type === 'success' ? 'bg-green-900/90 border-green-700 text-green-200' : 'bg-red-900/90 border-red-700 text-red-200';
+  return <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl border shadow-2xl text-sm font-medium fade-in ${c}`}>{type === 'success' ? '✓' : '✗'} {msg}<button onClick={onClose} className="ml-2 opacity-60 hover:opacity-100">×</button></div>;
+}
+const iCls = 'w-full bg-slate-900/70 border border-slate-600 rounded-xl px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500';
+const selCls = iCls + ' bg-slate-900';
+function Inp(props) { return <input className={iCls} {...props} />; }
+function Sel({ children, ...p }) { return <select className={selCls} {...p}>{children}</select>; }
+function Label({ children }) { return <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">{children}</label>; }
+function Fld({ label, children }) { return <div><Label>{label}</Label>{children}</div>; }
+function Btn({ children, onClick, variant = 'primary', disabled, size = 'md', type = 'button' }) {
+  const v = { primary:'bg-blue-600 hover:bg-blue-500 text-white', danger:'bg-red-700 hover:bg-red-600 text-white', success:'bg-green-700 hover:bg-green-600 text-white', ghost:'bg-slate-700 hover:bg-slate-600 text-slate-200', outline:'border border-slate-600 hover:border-slate-400 text-slate-300 hover:text-white' };
+  const s = size === 'sm' ? 'px-3 py-1.5 text-xs' : size === 'lg' ? 'px-6 py-3 text-base' : 'px-4 py-2 text-sm';
+  return <button type={type} onClick={onClick} disabled={disabled} className={`${v[variant]} ${s} rounded-xl font-semibold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 justify-center`}>{children}</button>;
+}
+function SectionHead({ title, sub }) {
+  return <div className="mb-5"><h2 className="text-xl font-bold text-white">{title}</h2>{sub && <p className="text-slate-400 text-sm mt-0.5">{sub}</p>}</div>;
+}
+function EmptyState({ msg }) { return <div className="py-12 text-center text-slate-500 text-sm">{msg}</div>; }
+
+// ── SIDEBAR ────────────────────────────────────────────────────────────────
+const NAV = [
+  { id:'users',     label:'Users',         icon:'👥', desc:'Add / Remove / Invite' },
+  { id:'vehicle',   label:'Vehicle Data',  icon:'🚗', desc:'Makes, Models, Colors' },
+  { id:'customers', label:'Customers',     icon:'🏢', desc:'Edit customer list' },
+  { id:'schedule',  label:'Schedule',      icon:'📅', desc:'Create & view shifts' },
+  { id:'timesheets',label:'Time Sheets',   icon:'⏱️', desc:'Check clock records' },
+  { id:'timeoff',   label:'Time Off',      icon:'🏖️', desc:'Requests & allowances' },
+  { id:'worklog',   label:'Work Log',      icon:'✅', desc:'View work & export' },
+  { id:'messages',  label:'Messages',      icon:'💬', desc:'Inbox & compose' },
+];
+
+function Sidebar({ active, setActive, onLogout, user, unread }) {
+  return (
+    <div className="w-60 bg-slate-900 border-r border-slate-700/50 flex flex-col min-h-screen flex-shrink-0">
+      <div className="px-5 py-4 border-b border-slate-700/50 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center overflow-hidden bg-indigo-600 flex-shrink-0">
+          <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-7 h-7">
+            <rect x="6" y="14" width="24" height="16" rx="3" fill="white" fillOpacity="0.9"/>
+            <rect x="13" y="10" width="10" height="6" rx="2" fill="white" fillOpacity="0.7"/>
+            <rect x="15" y="21" width="6" height="4" rx="1" fill="#4f46e5"/>
+          </svg>
+        </div>
+        <div><p className="text-white font-bold text-sm">Job Tracker</p><p className="text-slate-400 text-xs">Field Service Manager</p></div>
+      </div>
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        {NAV.map(item => (
+          <button key={item.id} onClick={() => setActive(item.id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left ${active === item.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+            <span className="text-base">{item.icon}</span>
+            <div className="flex-1 min-w-0">
+              <p className="truncate leading-tight">{item.label}</p>
+              <p className={`text-xs truncate ${active === item.id ? 'text-blue-200' : 'text-slate-500'}`}>{item.desc}</p>
+            </div>
+            {item.id === 'messages' && unread > 0 && <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">{unread}</span>}
+          </button>
+        ))}
+      </nav>
+      <div className="p-3 border-t border-slate-700/50">
+        <div className="flex items-center gap-3 px-2 py-2 mb-1">
+          <div className="w-8 h-8 bg-blue-700 rounded-full flex items-center justify-center font-bold text-white text-sm">{user.name[0]}</div>
+          <div className="flex-1 min-w-0"><p className="text-white text-xs font-semibold truncate">{user.name}</p><p className="text-slate-400 text-xs">Administrator</p></div>
+        </div>
+        <button onClick={onLogout} className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-slate-400 hover:text-red-400 hover:bg-red-900/20 transition-all">🚪 Logout</button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 1. USERS TAB
+// ══════════════════════════════════════════════════════════════════════════
+function UsersTab({ showToast }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ firstName:'', lastName:'', email:'', telephone:'', role:'worker' });
+  const [saving, setSaving] = useState(false);
+  const [newCred, setNewCred] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const load = useCallback(() => {
+    apiFetch('/api/users').then(d => { setUsers(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const addUser = async () => {
+    if (!form.firstName || !form.lastName || !form.email) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch('/api/users', { method:'POST', body: JSON.stringify(form) });
+      setNewCred(res);
+      setForm({ firstName:'', lastName:'', email:'', telephone:'', role:'worker' });
+      showToast('User added!');
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const removeUser = async (id, name) => {
+    if (!confirm(`Remove ${name}?`)) return;
+    setDeleting(id);
+    try {
+      await apiFetch(`/api/users/${id}`, { method:'DELETE' });
+      showToast('User removed');
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setDeleting(null);
+  };
+
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  return (
+    <div className="space-y-6 fade-in">
+      <SectionHead title="Users" sub="Add or remove technicians and admins" />
+
+      {/* Add User Form */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2">➕ Add User / Send Invite</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <Fld label="First Name"><Inp placeholder="First" value={form.firstName} onChange={e => upd('firstName', e.target.value)} /></Fld>
+          <Fld label="Last Name"><Inp placeholder="Last" value={form.lastName} onChange={e => upd('lastName', e.target.value)} /></Fld>
+          <Fld label="Email"><Inp type="email" placeholder="email@example.com" value={form.email} onChange={e => upd('email', e.target.value)} /></Fld>
+          <Fld label="Telephone"><Inp type="tel" placeholder="555-0100" value={form.telephone} onChange={e => upd('telephone', e.target.value)} /></Fld>
+          <Fld label="User Group">
+            <Sel value={form.role} onChange={e => upd('role', e.target.value)}>
+              <option value="worker">Tech / Worker</option>
+              <option value="admin">Admin</option>
+            </Sel>
+          </Fld>
+        </div>
+        <Btn onClick={addUser} disabled={saving || !form.firstName || !form.lastName || !form.email}>
+          {saving ? <><Spinner size="sm" /> Adding…</> : '➕ Add User & Send Invite'}
+        </Btn>
+
+        {newCred && (
+          <div className="mt-4 bg-green-900/30 border border-green-700/50 rounded-xl p-4">
+            <p className="text-green-300 font-semibold text-sm mb-2">✓ User created! Share these credentials:</p>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">Username</p><p className="text-white font-mono">{newCred.user?.username}</p></div>
+              <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">Password</p><p className="text-white font-mono">{newCred.generatedPassword}</p></div>
+              <div className="bg-slate-900/50 rounded-lg p-2 col-span-2"><p className="text-slate-400 text-xs">Login URL</p><p className="text-blue-300 text-xs break-all">https://worker-client-production.up.railway.app</p></div>
+            </div>
+            <button onClick={() => setNewCred(null)} className="mt-2 text-slate-500 hover:text-white text-xs">Dismiss</button>
+          </div>
+        )}
+      </Card>
+
+      {/* User List */}
+      <Card className="overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-700/50 flex items-center justify-between">
+          <h3 className="text-white font-semibold text-sm">Remove User</h3>
+          <Badge color="blue">{users.length} users</Badge>
+        </div>
+        {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
+          <div className="divide-y divide-slate-700/30">
+            {users.map(u => (
+              <div key={u._id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/20">
+                <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-700 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0">{u.name?.[0]}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium">{u.name}</p>
+                  <p className="text-slate-400 text-xs">{u.email} · {u.telephone || 'No phone'}</p>
+                </div>
+                <Badge color={u.role === 'admin' ? 'purple' : 'blue'}>{u.role}</Badge>
+                <button onClick={() => removeUser(u._id, u.name)} disabled={deleting === u._id || u.username === 'admin'}
+                  className="w-8 h-8 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all disabled:opacity-30 flex items-center justify-center text-sm">
+                  {deleting === u._id ? <Spinner size="sm" /> : '🗑️'}
+                </button>
+              </div>
+            ))}
+            {users.length === 0 && <EmptyState msg="No users found" />}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 2. VEHICLE DATA TAB
+// ══════════════════════════════════════════════════════════════════════════
+function VehicleTab({ showToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [inputs, setInputs] = useState({ year:'', make:'', model:'', selectedMake:'', color:'', service:'' });
+
+  const load = useCallback(() => {
+    apiFetch('/api/vehicledata').then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (updated) => {
+    setSaving(true);
+    try {
+      const res = await apiFetch('/api/vehicledata', { method:'PUT', body: JSON.stringify(updated) });
+      setData(res);
+      showToast('Saved!');
+    } catch (e) { showToast(e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const addYear = () => {
+    if (!inputs.year.trim()) return;
+    const years = [...new Set([...(data.years||[]), inputs.year.trim()])].sort((a,b) => b-a);
+    save({ ...data, years });
+    setInputs(i => ({ ...i, year:'' }));
+  };
+  const removeYear = (y) => save({ ...data, years: data.years.filter(x => x !== y) });
+
+  const addMake = () => {
+    if (!inputs.make.trim()) return;
+    const makes = [...new Set([...(data.makes||[]), inputs.make.trim()])].sort();
+    const models = { ...(data.models||{}) };
+    if (!models[inputs.make.trim()]) models[inputs.make.trim()] = [];
+    save({ ...data, makes, models });
+    setInputs(i => ({ ...i, make:'' }));
+  };
+  const removeMake = (m) => {
+    const makes = (data.makes||[]).filter(x => x !== m);
+    const models = { ...(data.models||{}) };
+    delete models[m];
+    save({ ...data, makes, models });
+  };
+
+  const addModel = () => {
+    if (!inputs.model.trim() || !inputs.selectedMake) return;
+    const models = { ...(data.models||{}) };
+    const list = [...new Set([...(models[inputs.selectedMake]||[]), inputs.model.trim()])].sort();
+    models[inputs.selectedMake] = list;
+    save({ ...data, models });
+    setInputs(i => ({ ...i, model:'' }));
+  };
+  const removeModel = (make, model) => {
+    const models = { ...(data.models||{}) };
+    models[make] = models[make].filter(m => m !== model);
+    save({ ...data, models });
+  };
+
+  const addColor = () => {
+    if (!inputs.color.trim()) return;
+    const colors = [...new Set([...(data.colors||[]), inputs.color.trim()])].sort();
+    save({ ...data, colors });
+    setInputs(i => ({ ...i, color:'' }));
+  };
+  const removeColor = (c) => save({ ...data, colors: data.colors.filter(x => x !== c) });
+
+  const addService = () => {
+    if (!inputs.service.trim()) return;
+    const services = [...new Set([...(data.services||[]), inputs.service.trim()])].sort();
+    save({ ...data, services });
+    setInputs(i => ({ ...i, service:'' }));
+  };
+  const removeService = (s) => save({ ...data, services: data.services.filter(x => x !== s) });
+
+  if (loading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>;
+  if (!data) return <Card className="p-10 text-center text-red-400 text-sm">Failed to load vehicle data. <button onClick={load} className="underline hover:text-white ml-1">Retry</button></Card>;
+
+  const ChipRow = ({ items, onRemove }) => (
+    <div className="flex flex-wrap gap-1.5 mt-2 min-h-[2rem]">
+      {(items||[]).map(item => (
+        <span key={item} className="flex items-center gap-1 bg-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded-full">
+          {item}
+          <button onClick={() => onRemove(item)} className="text-slate-400 hover:text-red-400 ml-1 font-bold">×</button>
+        </span>
+      ))}
+      {(!items||items.length===0) && <span className="text-slate-600 text-xs italic">None added yet</span>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 fade-in">
+      <SectionHead title="Vehicle Data" sub="Manage dropdown options shown to technicians" />
+      {saving && <div className="flex items-center gap-2 text-blue-400 text-sm"><Spinner size="sm" /> Saving…</div>}
+
+      {/* Years */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-3">📅 Years — Add / Remove</h3>
+        <div className="flex gap-2"><Inp placeholder="e.g. 2026" value={inputs.year} onChange={e => setInputs(i=>({...i,year:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addYear()} className="max-w-xs" /><Btn onClick={addYear} size="sm">Add</Btn></div>
+        <ChipRow items={data.years} onRemove={removeYear} />
+      </Card>
+
+      {/* Makes & Models */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-3">🏭 Make — Add / Remove</h3>
+        <div className="flex gap-2 mb-2"><Inp placeholder="e.g. Kia" value={inputs.make} onChange={e => setInputs(i=>({...i,make:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addMake()} /><Btn onClick={addMake} size="sm">Add</Btn></div>
+        <ChipRow items={data.makes} onRemove={removeMake} />
+
+        <div className="mt-5 pt-4 border-t border-slate-700/50">
+          <h3 className="text-white font-semibold mb-3">🔩 Model — Add / Remove</h3>
+          <div className="flex gap-2 mb-2 flex-wrap">
+            <Sel value={inputs.selectedMake} onChange={e => setInputs(i=>({...i,selectedMake:e.target.value}))} style={{maxWidth:160}}>
+              <option value="">Select make…</option>
+              {(data.makes||[]).map(m => <option key={m}>{m}</option>)}
+            </Sel>
+            <Inp placeholder="Model name" value={inputs.model} onChange={e => setInputs(i=>({...i,model:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addModel()} />
+            <Btn onClick={addModel} size="sm" disabled={!inputs.selectedMake}>Add</Btn>
+          </div>
+          {inputs.selectedMake && (
+            <ChipRow items={(data.models||{})[inputs.selectedMake]||[]} onRemove={m => removeModel(inputs.selectedMake, m)} />
+          )}
+          {!inputs.selectedMake && <p className="text-slate-500 text-xs italic mt-2">Select a make to view/edit its models</p>}
+        </div>
+      </Card>
+
+      {/* Colors */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-3">🎨 Color — Add / Remove</h3>
+        <div className="flex gap-2"><Inp placeholder="e.g. Purple" value={inputs.color} onChange={e => setInputs(i=>({...i,color:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addColor()} /><Btn onClick={addColor} size="sm">Add</Btn></div>
+        <ChipRow items={data.colors} onRemove={removeColor} />
+      </Card>
+
+      {/* Services */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-3">🔧 Service — Add / Remove</h3>
+        <div className="flex gap-2"><Inp placeholder="e.g. Ceramic Coating" value={inputs.service} onChange={e => setInputs(i=>({...i,service:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addService()} /><Btn onClick={addService} size="sm">Add</Btn></div>
+        <ChipRow items={data.services} onRemove={removeService} />
+      </Card>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 3. CUSTOMERS TAB
+// ══════════════════════════════════════════════════════════════════════════
+function CustomersTab({ showToast }) {
+  const [customers, setCustomers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null=list, 'new'=form, id=edit
+  const blank = { name:'', address:'', notes:'', mainContactName:'', mainContactPhone:'' };
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    apiFetch('/api/customers').then(d => { setCustomers(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const openEdit = (c) => { setForm({ name:c.name, address:c.address||'', notes:c.notes||'', mainContactName:c.mainContactName||'', mainContactPhone:c.mainContactPhone||'' }); setEditing(c._id); };
+  const openNew = () => { setForm(blank); setEditing('new'); };
+
+  const saveCustomer = async () => {
+    if (!form.name) return;
+    setSaving(true);
+    try {
+      if (editing === 'new') {
+        await apiFetch('/api/customers', { method:'POST', body: JSON.stringify(form) });
+        showToast('Customer created!');
+      } else {
+        await apiFetch(`/api/customers/${editing}`, { method:'PATCH', body: JSON.stringify(form) });
+        showToast('Customer updated!');
+      }
+      load(); setEditing(null);
+    } catch (e) { showToast(e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const deleteCustomer = async (id, name) => {
+    if (!confirm(`Delete ${name}?`)) return;
+    try { await apiFetch(`/api/customers/${id}`, { method:'DELETE' }); showToast('Deleted'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  if (editing !== null) return (
+    <div className="space-y-5 fade-in">
+      <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1">← Back to list</button>
+      <SectionHead title={editing === 'new' ? 'Create Customer' : 'Edit Customer'} />
+      <Card className="p-5 space-y-3">
+        <Fld label="Customer Name"><Inp placeholder="ABC Auto Dealership" value={form.name} onChange={e => upd('name', e.target.value)} /></Fld>
+        <Fld label="Customer Address"><Inp placeholder="123 Main St, City, State" value={form.address} onChange={e => upd('address', e.target.value)} /></Fld>
+        <Fld label="Notes"><textarea className={iCls + ' h-20 resize-none'} placeholder="Notes about this customer…" value={form.notes} onChange={e => upd('notes', e.target.value)} /></Fld>
+        <Fld label="Main Contact Name"><Inp placeholder="Contact person name" value={form.mainContactName} onChange={e => upd('mainContactName', e.target.value)} /></Fld>
+        <Fld label="Main Contact Phone"><Inp type="tel" placeholder="555-1000" value={form.mainContactPhone} onChange={e => upd('mainContactPhone', e.target.value)} /></Fld>
+        <div className="flex gap-2 pt-2">
+          <Btn onClick={saveCustomer} disabled={saving || !form.name}>{saving ? <><Spinner size="sm"/>Saving…</> : editing === 'new' ? '✓ Create' : '✓ Save Changes'}</Btn>
+          <Btn onClick={() => setEditing(null)} variant="ghost">Cancel</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 fade-in">
+      <div className="flex items-center justify-between">
+        <SectionHead title="Customers" sub={`${customers.length} customers`} />
+        <Btn onClick={openNew}>➕ Create Customer</Btn>
+      </div>
+      <Card className="overflow-hidden">
+        {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
+          <div className="divide-y divide-slate-700/30">
+            {customers.map(c => (
+              <div key={c._id} className="flex items-start gap-3 px-5 py-4 hover:bg-slate-700/20">
+                <div className="w-10 h-10 bg-slate-700 rounded-xl flex items-center justify-center text-lg flex-shrink-0">🏢</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-semibold text-sm">{c.name}</p>
+                  <p className="text-slate-400 text-xs">{c.address || 'No address'}</p>
+                  {c.mainContactName && <p className="text-slate-500 text-xs mt-0.5">Contact: {c.mainContactName} {c.mainContactPhone && `· ${c.mainContactPhone}`}</p>}
+                  {c.notes && <p className="text-slate-600 text-xs mt-0.5 italic">{c.notes}</p>}
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={() => openEdit(c)} className="w-8 h-8 rounded-lg bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white transition-all flex items-center justify-center text-sm">✏️</button>
+                  <button onClick={() => deleteCustomer(c._id, c.name)} className="w-8 h-8 rounded-lg bg-slate-700 hover:bg-red-700 text-slate-300 hover:text-white transition-all flex items-center justify-center text-sm">🗑️</button>
+                </div>
+              </div>
+            ))}
+            {customers.length === 0 && <EmptyState msg="No customers yet. Create one above." />}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 4. SCHEDULE TAB
+// ══════════════════════════════════════════════════════════════════════════
+function ScheduleTab({ showToast }) {
+  const [schedule, setSchedule] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const blank = { userId:'', userName:'', date:'', startTime:'', endTime:'', notes:'' };
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    Promise.all([apiFetch('/api/schedule'), apiFetch('/api/users')]).then(([s, u]) => {
+      setSchedule(s); setUsers(u.filter(x => x.role === 'worker')); setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const createShift = async () => {
+    if (!form.userId || !form.date || !form.startTime || !form.endTime) return;
+    setSaving(true);
+    try {
+      await apiFetch('/api/schedule', { method:'POST', body: JSON.stringify(form) });
+      showToast('Shift created!'); setForm(blank); load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const deleteShift = async (id) => {
+    try { await apiFetch(`/api/schedule/${id}`, { method:'DELETE' }); showToast('Shift deleted'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const grouped = schedule.reduce((acc, s) => { (acc[s.date] = acc[s.date]||[]).push(s); return acc; }, {});
+  const dates = Object.keys(grouped).sort();
+
+  return (
+    <div className="space-y-5 fade-in">
+      <SectionHead title="Create Schedule" sub="Assign shifts to technicians" />
+
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-4">➕ New Shift</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <Fld label="Technician">
+            <Sel value={form.userId} onChange={e => { const u=users.find(x=>x._id===e.target.value); upd('userId', e.target.value); upd('userName', u?.name||''); }}>
+              <option value="">Select tech…</option>
+              {users.map(u => <option key={u._id} value={u._id}>{u.name}</option>)}
+            </Sel>
+          </Fld>
+          <Fld label="Date"><Inp type="date" value={form.date} onChange={e => upd('date', e.target.value)} /></Fld>
+          <Fld label="Start Time"><Inp type="time" value={form.startTime} onChange={e => upd('startTime', e.target.value)} /></Fld>
+          <Fld label="End Time"><Inp type="time" value={form.endTime} onChange={e => upd('endTime', e.target.value)} /></Fld>
+          <Fld label="Notes (optional)"><Inp placeholder="Any special notes…" value={form.notes} onChange={e => upd('notes', e.target.value)} /></Fld>
+        </div>
+        <Btn onClick={createShift} disabled={saving || !form.userId || !form.date || !form.startTime || !form.endTime}>
+          {saving ? <><Spinner size="sm"/>Saving…</> : '📅 Create Shift'}
+        </Btn>
+      </Card>
+
+      {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
+        <div className="space-y-4">
+          {dates.length === 0 && <Card className="p-5"><EmptyState msg="No shifts scheduled yet" /></Card>}
+          {dates.map(date => (
+            <Card key={date} className="overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-700/50 bg-slate-700/20">
+                <p className="text-white font-semibold text-sm">{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })}</p>
+              </div>
+              {grouped[date].map(s => (
+                <div key={s._id} className="flex items-center gap-3 px-5 py-3 border-b border-slate-700/20 last:border-0 hover:bg-slate-700/20">
+                  <div className="w-8 h-8 bg-blue-900/50 rounded-full flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">{s.userName?.[0]}</div>
+                  <div className="flex-1">
+                    <p className="text-white text-sm font-medium">{s.userName}</p>
+                    <p className="text-slate-400 text-xs">{s.startTime} – {s.endTime}{s.notes && ` · ${s.notes}`}</p>
+                  </div>
+                  <button onClick={() => deleteShift(s._id)} className="w-7 h-7 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all flex items-center justify-center text-xs">✕</button>
+                </div>
+              ))}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 5. TIME SHEETS TAB
+// ══════════════════════════════════════════════════════════════════════════
+function TimeSheetsTab() {
+  const [users, setUsers] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [selectedUser, setSelectedUser] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([apiFetch('/api/users'), apiFetch('/api/clock')]).then(([u, c]) => {
+      setUsers(u.filter(x => x.role === 'worker')); setRecords(c); setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const userRecords = selectedUser
+    ? records.filter(r => r.userId === selectedUser || r.userName === users.find(u=>u._id===selectedUser)?.name)
+    : [];
+
+  // Group by date
+  const grouped = userRecords.reduce((acc, r) => { (acc[r.date]=acc[r.date]||[]).push(r); return acc; }, {});
+  const dates = Object.keys(grouped).sort((a,b) => new Date(b)-new Date(a));
+
+  // Compute hours per date
+  const getHours = (recs) => {
+    const sorted = [...recs].sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+    let ms = 0;
+    for (let i = 0; i < sorted.length-1; i+=2) {
+      if (sorted[i]?.type==='in' && sorted[i+1]?.type==='out')
+        ms += new Date(sorted[i+1].createdAt) - new Date(sorted[i].createdAt);
+    }
+    return ms > 0 ? (ms/3600000).toFixed(2) : null;
+  };
+
+  return (
+    <div className="space-y-5 fade-in">
+      <SectionHead title="View Time Sheets" sub="Check clock in/out records by employee" />
+
+      <Card className="p-5">
+        <Fld label="Select Employee">
+          <Sel value={selectedUser} onChange={e => setSelectedUser(e.target.value)}>
+            <option value="">— Choose a technician —</option>
+            {users.map(u => <option key={u._id} value={u._id}>{u.name}</option>)}
+          </Sel>
+        </Fld>
+      </Card>
+
+      {loading && <div className="flex justify-center py-8"><Spinner /></div>}
+
+      {!loading && selectedUser && (
+        <>
+          {dates.length === 0 && <Card className="p-5"><EmptyState msg="No clock records for this employee" /></Card>}
+          {dates.map(date => {
+            const hrs = getHours(grouped[date]);
+            return (
+              <Card key={date} className="overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-700/50 flex items-center justify-between">
+                  <p className="text-white font-semibold text-sm">{date}</p>
+                  {hrs && <Badge color="green">{hrs} hrs</Badge>}
+                </div>
+                {grouped[date].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).map(r => (
+                  <div key={r._id} className="flex items-center gap-3 px-5 py-2.5 border-b border-slate-700/20 last:border-0">
+                    <span className={`text-sm font-semibold w-20 ${r.type==='in'?'text-green-400':'text-red-400'}`}>Clock {r.type==='in'?'In':'Out'}</span>
+                    <span className="text-slate-300 text-sm font-mono">{r.time}</span>
+                    {r.geo && <span className="text-slate-500 text-xs">📍 {r.geo.lat}, {r.geo.lng}</span>}
+                  </div>
+                ))}
+              </Card>
+            );
+          })}
+        </>
+      )}
+      {!loading && !selectedUser && <Card className="p-10 text-center text-slate-500 text-sm">Select an employee to view their time sheet</Card>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 6. TIME OFF TAB
+// ══════════════════════════════════════════════════════════════════════════
+function TimeOffTab({ showToast }) {
+  const [requests, setRequests] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(null);
+  const [editUserId, setEditUserId] = useState('');
+  const [editDays, setEditDays] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  const load = useCallback(() => {
+    Promise.all([apiFetch('/api/timeoff'), apiFetch('/api/users')]).then(([t, u]) => {
+      setRequests(t); setUsers(u.filter(x=>x.role==='worker')); setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const updateReq = async (id, status) => {
+    setUpdating(id);
+    try {
+      await apiFetch(`/api/timeoff/${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
+      showToast(`Request ${status}!`); load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setUpdating(null);
+  };
+
+  const saveAllowance = async () => {
+    if (!editUserId || editDays === '') return;
+    setEditSaving(true);
+    try {
+      await apiFetch(`/api/users/${editUserId}`, { method:'PATCH', body: JSON.stringify({ allowedDaysOff: Number(editDays) }) });
+      showToast('Allowance updated!'); load(); setEditUserId(''); setEditDays('');
+    } catch (e) { showToast(e.message, 'error'); }
+    setEditSaving(false);
+  };
+
+  const pending = requests.filter(r => r.status==='pending');
+  const decided = requests.filter(r => r.status!=='pending');
+
+  return (
+    <div className="space-y-6 fade-in">
+      <SectionHead title="Time Off Requests" sub={`${pending.length} pending · ${decided.length} decided`} />
+
+      {/* Pending */}
+      {pending.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending Approval — Accept / Deny</p>
+          {pending.map((r, i) => (
+            <Card key={r._id} className="p-4 border-yellow-700/20 fade-in">
+              <div className="flex items-start gap-3 flex-wrap">
+                <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0">{i+1}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-semibold text-sm">{r.userName}</p>
+                  <p className="text-slate-400 text-xs">{r.requestDate} · {r.reason}</p>
+                  <p className="text-slate-500 text-xs">Submitted {new Date(r.createdAt).toLocaleDateString()}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => updateReq(r._id,'approved')} disabled={updating===r._id}
+                    className="flex items-center gap-1 bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
+                    {updating===r._id?<Spinner size="sm"/>:'✓'} Accept
+                  </button>
+                  <button onClick={() => updateReq(r._id,'denied')} disabled={updating===r._id}
+                    className="flex items-center gap-1 bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
+                    {updating===r._id?<Spinner size="sm"/>:'✕'} Deny
+                  </button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Edit Available Days */}
+      <Card className="p-5">
+        <h3 className="text-white font-semibold mb-4">✏️ Edit Tech — Available Time Off</h3>
+        <div className="flex gap-3 flex-wrap items-end">
+          <div className="flex-1 min-w-[180px]">
+            <Fld label="Tech">
+              <Sel value={editUserId} onChange={e => { setEditUserId(e.target.value); const u=users.find(x=>x._id===e.target.value); setEditDays(u?.allowedDaysOff??''); }}>
+                <option value="">Select technician…</option>
+                {users.map(u => <option key={u._id} value={u._id}>{u.name} (currently: {u.allowedDaysOff??10} days)</option>)}
+              </Sel>
+            </Fld>
+          </div>
+          <div style={{width:120}}>
+            <Fld label="# Days"><Inp type="number" min="0" max="365" placeholder="10" value={editDays} onChange={e => setEditDays(e.target.value)} /></Fld>
+          </div>
+          <div className="pb-0.5"><Btn onClick={saveAllowance} disabled={editSaving||!editUserId||editDays===''} variant="success">{editSaving?<><Spinner size="sm"/>Saving…</>:'Save'}</Btn></div>
+        </div>
+      </Card>
+
+      {/* Decided */}
+      {decided.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Decided</p>
+          <Card className="overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-slate-700/60">{['Worker','Date','Reason','Status'].map(h=><th key={h} className="text-left px-5 py-3 text-slate-400 font-semibold text-xs uppercase">{h}</th>)}</tr></thead>
+              <tbody>
+                {decided.map(r=>(
+                  <tr key={r._id} className="border-b border-slate-700/20 hover:bg-slate-700/10">
+                    <td className="px-5 py-2.5 text-white font-medium text-sm">{r.userName}</td>
+                    <td className="px-5 py-2.5 text-slate-300 text-sm">{r.requestDate}</td>
+                    <td className="px-5 py-2.5 text-slate-400 text-sm">{r.reason}</td>
+                    <td className="px-5 py-2.5"><Badge color={r.status==='approved'?'green':'red'}>{r.status==='approved'?'✓ Approved':'✗ Denied'}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
+
+      {loading && <div className="flex justify-center py-8"><Spinner /></div>}
+      {!loading && pending.length===0 && decided.length===0 && <Card className="p-5"><EmptyState msg="No time-off requests yet" /></Card>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 7. WORK LOG TAB
+// ══════════════════════════════════════════════════════════════════════════
+function WorkLogTab() {
+  const [sheets, setSheets] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [selectedTechs, setSelectedTechs] = useState({});
+
+  useEffect(() => {
+    Promise.all([apiFetch('/api/worksheets'), apiFetch('/api/users')]).then(([s, u]) => {
+      const workers = u.filter(x=>x.role==='worker');
+      setSheets(s); setUsers(workers);
+      const init = {};
+      workers.forEach(w => init[w.name] = true);
+      setSelectedTechs(init);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const toggleTech = (name) => setSelectedTechs(p => ({ ...p, [name]: !p[name] }));
+  const toggleAll = () => {
+    const allOn = users.every(u => selectedTechs[u.name]);
+    const next = {};
+    users.forEach(u => next[u.name] = !allOn);
+    setSelectedTechs(next);
+  };
+
+  const filtered = sheets.filter(s => {
+    if (dateFrom && s.date < dateFrom) return false;
+    if (dateTo && s.date > dateTo) return false;
+    if (users.length > 0 && !selectedTechs[s.userName]) return false;
+    return true;
+  });
+
+  const exportCSV = () => {
+    const headers = ['Worker','Customer','Date','VIN','Stock','Year','Make','Model','Color','Services'];
+    const rows = filtered.map(s => [
+      s.userName, s.customer, s.date, s.vin, s.stock, s.year, s.make, s.model, s.color,
+      (s.items||[]).filter(i=>i.service).map(i=>i.service).join('; ')
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`work-log-${new Date().toISOString().split('T')[0]}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="space-y-5 fade-in">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <SectionHead title="View Work Log" sub={`${filtered.length} records`} />
+        <Btn onClick={exportCSV} variant="success" disabled={filtered.length===0}>📤 Export Data (CSV)</Btn>
+      </div>
+
+      {/* Filters */}
+      <Card className="p-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <Fld label="Date Range — From"><Inp type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} /></Fld>
+          <Fld label="Date Range — To"><Inp type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} /></Fld>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <Label>Select Tech / Techs</Label>
+            <button onClick={toggleAll} className="text-xs text-blue-400 hover:text-blue-300">{users.every(u=>selectedTechs[u.name]) ? 'Deselect All' : 'Select All'}</button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {users.map(u => (
+              <label key={u._id} className={`flex items-center gap-2 p-2.5 rounded-xl cursor-pointer border transition-all ${selectedTechs[u.name]?'bg-blue-900/30 border-blue-700/50 text-white':'bg-slate-700/20 border-slate-700/30 text-slate-400 hover:border-slate-600'}`}>
+                <input type="checkbox" checked={!!selectedTechs[u.name]} onChange={()=>toggleTech(u.name)} className="accent-blue-500 w-4 h-4" />
+                <span className="text-sm font-medium truncate">{u.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
+        <Card className="overflow-hidden">
+          {filtered.length === 0 ? <EmptyState msg="No records match your filters" /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-700/60">
+                    {['Worker','Customer','VIN','Stock','Year','Make','Model','Color','Services','Image 1','Image 2'].map(h=>(
+                      <th key={h} className="text-left px-4 py-3 text-slate-400 font-semibold uppercase whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(s => (
+                    <tr key={s._id} className="border-b border-slate-700/20 hover:bg-slate-700/20">
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap">{s.userName}</td>
+                      <td className="px-4 py-2.5 text-white font-medium whitespace-nowrap">{s.customer}</td>
+                      <td className="px-4 py-2.5 text-slate-400 font-mono whitespace-nowrap">{s.vin||'—'}</td>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{s.stock||'—'}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{s.year}</td>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{s.make}</td>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{s.model}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{s.color}</td>
+                      <td className="px-4 py-2.5 text-slate-500 max-w-[160px] truncate">{(s.items||[]).filter(i=>i.service).map(i=>i.service).join(', ')||'—'}</td>
+                      <td className="px-4 py-2.5">{s.photos?.[0]?<img src={s.photos[0]} className="w-10 h-10 object-cover rounded-lg" alt=""/>:<span className="text-slate-600">—</span>}</td>
+                      <td className="px-4 py-2.5">{s.photos?.[1]?<img src={s.photos[1]} className="w-10 h-10 object-cover rounded-lg" alt=""/>:<span className="text-slate-600">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 8. MESSAGES TAB
+// ══════════════════════════════════════════════════════════════════════════
+function MessagesTab({ adminUser, showToast, onUnreadChange }) {
+  const [messages, setMessages] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('inbox');
+  const [selected, setSelected] = useState(null);
+  const [showCompose, setShowCompose] = useState(false);
+  const [toId, setToId] = useState('');
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const load = useCallback(() => {
+    Promise.all([apiFetch('/api/messages'), apiFetch('/api/users')]).then(([m, u]) => {
+      setMessages(m); setUsers(u); setLoading(false);
+      const unread = m.filter(x => x.toId===adminUser.id && !x.read).length;
+      onUnreadChange(unread);
+    }).catch(() => setLoading(false));
+  }, [adminUser.id, onUnreadChange]);
+  useEffect(() => { load(); }, [load]);
+
+  const inbox = messages.filter(m => m.toId===adminUser.id);
+  const sent  = messages.filter(m => m.fromId===adminUser.id);
+  const unread = inbox.filter(m => !m.read).length;
+  const list = tab==='inbox' ? inbox : sent;
+
+  const markRead = async (msg) => {
+    if (!msg.read && tab==='inbox') {
+      try { await apiFetch(`/api/messages/${msg._id}/read`, { method:'PATCH' }); load(); } catch {}
+    }
+    setSelected(msg);
+  };
+
+  const send = async () => {
+    if (!toId || !body.trim()) return;
+    setSending(true);
+    const toUser = users.find(u=>u._id===toId);
+    try {
+      await apiFetch('/api/messages', { method:'POST', body: JSON.stringify({ toId, toName: toUser?.name, body: body.trim() }) });
+      showToast('Message sent!'); setShowCompose(false); setToId(''); setBody(''); load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setSending(false);
+  };
+
+  const recipients = users.filter(u=>u._id!==adminUser.id);
+
+  return (
+    <div className="space-y-5 fade-in">
+      <div className="flex items-center justify-between">
+        <SectionHead title="Messages" sub={unread>0?`${unread} unread`:'All caught up'} />
+        <Btn onClick={() => setShowCompose(true)}>✉️ Compose</Btn>
+      </div>
+
+      {showCompose && (
+        <Card className="p-5 border-blue-700/30 fade-in">
+          <h3 className="text-white font-semibold mb-3">New Message</h3>
+          <div className="space-y-3">
+            <Fld label="To">
+              <Sel value={toId} onChange={e=>setToId(e.target.value)}>
+                <option value="">Select recipient…</option>
+                {recipients.map(u=><option key={u._id} value={u._id}>{u.name} ({u.role})</option>)}
+              </Sel>
+            </Fld>
+            <Fld label="Message"><textarea className={iCls+' h-28 resize-none'} placeholder="Type your message…" value={body} onChange={e=>setBody(e.target.value)} /></Fld>
+            <div className="flex gap-2">
+              <Btn onClick={send} disabled={!toId||!body.trim()||sending}>{sending?<><Spinner size="sm"/>Sending…</>:'Send'}</Btn>
+              <Btn onClick={()=>{setShowCompose(false);setToId('');setBody('');}} variant="ghost">Cancel</Btn>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex gap-2">
+        {[['inbox',`Inbox${unread>0?` (${unread})`:''}`],['sent','Sent']].map(([key,label])=>(
+          <button key={key} onClick={()=>{setTab(key);setSelected(null);}}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab===key?'bg-blue-600 text-white':'bg-slate-800 text-slate-400 hover:text-white'}`}>{label}</button>
+        ))}
+      </div>
+
+      {selected ? (
+        <Card className="p-5 fade-in">
+          <button onClick={()=>setSelected(null)} className="text-slate-400 hover:text-white text-sm mb-4">← Back</button>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center font-bold text-white">{(tab==='inbox'?selected.fromName:selected.toName)?.[0]}</div>
+            <div><p className="text-white font-semibold">{tab==='inbox'?`From: ${selected.fromName}`:`To: ${selected.toName}`}</p><p className="text-slate-400 text-xs">{new Date(selected.createdAt).toLocaleString()}</p></div>
+          </div>
+          <div className="bg-slate-700/40 rounded-xl p-4 text-slate-200 text-sm leading-relaxed">{selected.body}</div>
+        </Card>
+      ) : (
+        <Card className="overflow-hidden">
+          {loading ? <div className="flex justify-center py-8"><Spinner /></div> :
+           list.length===0 ? <EmptyState msg="No messages" /> :
+           list.map(m=>(
+            <div key={m._id} onClick={()=>markRead(m)}
+              className={`flex items-center gap-3 px-5 py-4 border-b border-slate-700/30 last:border-0 cursor-pointer hover:bg-slate-700/20 ${tab==='inbox'&&!m.read?'bg-blue-950/30':''}`}>
+              <div className="w-9 h-9 bg-slate-700 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0">{(tab==='inbox'?m.fromName:m.toName)?.[0]}</div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm ${tab==='inbox'&&!m.read?'text-white font-semibold':'text-slate-300'} truncate`}>{tab==='inbox'?m.fromName:m.toName}</p>
+                <p className="text-slate-500 text-xs truncate">{m.body}</p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {tab==='inbox'&&!m.read&&<div className="w-2 h-2 bg-blue-400 rounded-full"/>}
+                <p className="text-slate-500 text-xs">{new Date(m.createdAt).toLocaleDateString()}</p>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOGIN
+// ══════════════════════════════════════════════════════════════════════════
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async () => {
+    if (!username || !password) return;
+    setLoading(true); setError('');
+    try {
+      const data = await apiFetch('/api/login', { method:'POST', body: JSON.stringify({ username:username.trim(), password }) });
+      if (data.user.role !== 'admin') throw new Error('Access denied — admin accounts only');
+      localStorage.setItem('admin_jwt', data.token);
+      localStorage.setItem('admin_user', JSON.stringify(data.user));
+      onLogin(data.user);
+    } catch (e) { setError(e.message); setLoading(false); }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-5 flex items-center justify-center shadow-2xl shadow-blue-900"><span className="text-4xl">🛡️</span></div>
+          <h1 className="text-3xl font-bold text-white">Job Tracker</h1>
+          <p className="text-slate-400 text-sm mt-1">Field Service Manager — Admin</p>
+        </div>
+        <Card className="p-6 space-y-4">
+          <Fld label="Username"><Inp type="text" placeholder="admin" value={username} onChange={e=>{setUsername(e.target.value);setError('');}} onKeyDown={e=>e.key==='Enter'&&handleLogin()} autoCapitalize="none" /></Fld>
+          <Fld label="Password"><Inp type="password" placeholder="••••••••" value={password} onChange={e=>{setPassword(e.target.value);setError('');}} onKeyDown={e=>e.key==='Enter'&&handleLogin()} /></Fld>
+          {error && <div className="bg-red-900/40 border border-red-700/50 text-red-300 rounded-xl px-4 py-2.5 text-sm">{error}</div>}
+          <button onClick={handleLogin} disabled={loading||!username||!password}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2">
+            {loading?<><Spinner size="sm"/>Signing in…</>:'Sign In'}
+          </button>
+        </Card>
+        <p className="text-center text-slate-500 text-xs mt-5">Admin access only · Secured by JWT</p>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════
+function Dashboard({ user, onLogout }) {
+  const [active, setActive] = useState('users');
+  const [toast, setToast] = useState(null);
+  const [unread, setUnread] = useState(0);
+
+  const showToast = useCallback((msg, type='success') => setToast({ msg, type, id: Date.now() }), []);
+
+  const renderTab = () => {
+    switch (active) {
+      case 'users':      return <UsersTab showToast={showToast} />;
+      case 'vehicle':    return <VehicleTab showToast={showToast} />;
+      case 'customers':  return <CustomersTab showToast={showToast} />;
+      case 'schedule':   return <ScheduleTab showToast={showToast} />;
+      case 'timesheets': return <TimeSheetsTab />;
+      case 'timeoff':    return <TimeOffTab showToast={showToast} />;
+      case 'worklog':    return <WorkLogTab />;
+      case 'messages':   return <MessagesTab adminUser={user} showToast={showToast} onUnreadChange={setUnread} />;
+      default:           return <UsersTab showToast={showToast} />;
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen">
+      <Sidebar active={active} setActive={setActive} onLogout={onLogout} user={user} unread={unread} />
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-6 max-w-6xl mx-auto">{renderTab()}</div>
+      </div>
+      {toast && <Toast key={toast.id} msg={toast.msg} type={toast.type} onClose={()=>setToast(null)} />}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP ROOT
+// ══════════════════════════════════════════════════════════════════════════
+function App() {
+  const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('admin_user'))||null; } catch { return null; } });
+  const handleLogout = () => { localStorage.removeItem('admin_jwt'); localStorage.removeItem('admin_user'); setUser(null); };
+  if (!user) return <LoginScreen onLogin={setUser} />;
+  return <Dashboard user={user} onLogout={handleLogout} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

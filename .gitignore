@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.apk
+android-app/android/.gradle/
+android-app/android/app/build/
+android-app/android/build/
+android-app/jobtracker.keystore
+.DS_Store

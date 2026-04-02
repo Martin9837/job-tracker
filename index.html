@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Job Tracker</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    body { background: #f0f4f8; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; margin:0; overscroll-behavior:none; }
+    input, select, textarea { font-family: inherit; }
+
+    /* Screen transitions */
+    @keyframes slideInRight { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
+    @keyframes slideInUp    { from { transform: translateY(40px); opacity:0; } to { transform: translateY(0); opacity:1; } }
+    @keyframes fadeIn       { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse        { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+    @keyframes spin         { to { transform: rotate(360deg); } }
+    @keyframes ripple       { 0% { transform:scale(0); opacity:.4; } 100% { transform:scale(4); opacity:0; } }
+    @keyframes bounceIn     { 0% { transform:scale(0.85); opacity:0; } 60% { transform:scale(1.05); } 100% { transform:scale(1); opacity:1; } }
+    @keyframes shimmer      { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+
+    .screen-slide  { animation: slideInRight .28s cubic-bezier(.4,0,.2,1); }
+    .screen-up     { animation: slideInUp .3s cubic-bezier(.4,0,.2,1); }
+    .fade-in       { animation: fadeIn .25s ease both; }
+    .bounce-in     { animation: bounceIn .4s cubic-bezier(.4,0,.2,1) both; }
+    .spinner       { animation: spin .75s linear infinite; }
+    .pulse-anim    { animation: pulse 2s ease-in-out infinite; }
+
+    .card-hover    { transition: transform .15s ease, box-shadow .15s ease; }
+    .card-hover:active { transform: scale(0.97); }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 0; }
+
+    /* Status bar safe area */
+    .safe-top { padding-top: env(safe-area-inset-top, 0px); }
+
+    /* Glassmorphism */
+    .glass { background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+
+    /* Input focus */
+    input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
+
+    /* Skeleton loading */
+    .skeleton { background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%); background-size: 400px 100%; animation: shimmer 1.4s ease infinite; border-radius: 12px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ── API ────────────────────────────────────────────────────────────────────
+const API = 'https://worker-api-production-3285.up.railway.app';
+function getToken() { return localStorage.getItem('jwt') || ''; }
+async function apiFetch(path, opts = {}) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) };
+  const res = await fetch(API + path, { ...opts, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+// ── CONSTANTS ──────────────────────────────────────────────────────────────
+const CUSTOMERS   = ['Smith Auto', 'Johnson Fleet', 'ABC Motors', 'XYZ Dealership', 'Metro Cars'];
+const YEARS       = Array.from({ length: 30 }, (_, i) => String(2025 - i));
+const MAKES       = ['Toyota','Honda','Ford','Chevrolet','BMW','Mercedes','Nissan','Hyundai'];
+const MODELS      = {
+  Toyota:['Camry','Corolla','RAV4','Tacoma','Highlander'], Honda:['Civic','Accord','CR-V','Pilot','HR-V'],
+  Ford:['F-150','Mustang','Explorer','Escape','Bronco'], Chevrolet:['Silverado','Malibu','Equinox','Traverse','Colorado'],
+  BMW:['3 Series','5 Series','X3','X5','X7'], Mercedes:['C-Class','E-Class','GLC','GLE','S-Class'],
+  Nissan:['Altima','Sentra','Rogue','Pathfinder','Frontier'], Hyundai:['Elantra','Sonata','Tucson','Santa Fe','Palisade'],
+};
+const COLORS = ['White','Black','Silver','Gray','Red','Blue','Green','Brown','Orange','Yellow'];
+const SERVICES = ['Oil Change','Tire Rotation','Brake Inspection','Air Filter Replacement','Battery Check','Transmission Service','Coolant Flush','Spark Plugs','Wiper Blades','Cabin Air Filter'];
+const TIME_OFF_REASONS = ['Vacation','Personal Day','Medical','Family Emergency','Other'];
+
+// ── LOGO SVG ───────────────────────────────────────────────────────────────
+function LogoIcon({ size = 40, dark = false }) {
+  const stroke = dark ? '#1a4778' : 'white';
+  const check  = dark ? '#3b82f6' : '#93c5fd';
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="12" y="38" width="76" height="52" rx="10" stroke={stroke} strokeWidth="6" fill="none"/>
+      <rect x="35" y="26" width="30" height="18" rx="6" stroke={stroke} strokeWidth="6" fill="none"/>
+      <polyline points="28,64 44,80 72,50" stroke={check} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+// ── SHARED COMPONENTS ──────────────────────────────────────────────────────
+function Spinner({ size = 24, color = '#3b82f6' }) {
+  return (
+    <div style={{ width: size, height: size, border: `3px solid #e2e8f0`, borderTop: `3px solid ${color}`, borderRadius: '50%' }} className="spinner" />
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm">
+      <div className="skeleton h-4 w-3/4 mb-2" style={{minHeight:16}} />
+      <div className="skeleton h-3 w-1/2" style={{minHeight:12}} />
+    </div>
+  );
+}
+
+function Toast({ msg, type = 'success', onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3200); return () => clearTimeout(t); }, []);
+  const styles = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    info: 'bg-blue-500',
+  };
+  return (
+    <div className={`fixed top-5 left-4 right-4 z-50 ${styles[type] || styles.success} text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 bounce-in`}
+      style={{maxWidth:400, margin:'0 auto'}}>
+      <span className="text-lg">{type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
+      <span className="flex-1 text-sm font-semibold">{msg}</span>
+      <button onClick={onClose} className="text-white/70 hover:text-white text-xl leading-none">×</button>
+    </div>
+  );
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null);
+  const show = (msg, type = 'success') => setToast({ msg, type });
+  const hide = () => setToast(null);
+  const el = toast ? <Toast msg={toast.msg} type={toast.type} onClose={hide} /> : null;
+  return [el, show];
+}
+
+const iCls = 'w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm placeholder-gray-400 transition-all focus:bg-white focus:border-blue-400';
+const selCls = iCls;
+
+function Inp(props) { return <input className={iCls} {...props} />; }
+function Sel({ children, ...p }) { return <select className={selCls + ' bg-gray-50'} {...p}>{children}</select>; }
+
+function Field({ label, children, className = '' }) {
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider px-1">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function PrimaryBtn({ children, onClick, disabled, loading: ld, className = '', type = 'button' }) {
+  return (
+    <button type={type} onClick={onClick} disabled={disabled || ld}
+      className={`w-full bg-blue-600 text-white py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 ${className}`}>
+      {ld ? <Spinner size={18} color="white" /> : children}
+    </button>
+  );
+}
+
+function SecondaryBtn({ children, onClick, disabled, className = '' }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className={`w-full bg-white text-blue-600 border-2 border-blue-100 py-3 rounded-2xl font-bold text-sm active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2 ${className}`}>
+      {children}
+    </button>
+  );
+}
+
+// Screen wrapper with slide animation
+function Screen({ children, className = '' }) {
+  return <div className={`min-h-screen bg-gray-50 screen-slide ${className}`}>{children}</div>;
+}
+
+// Native-style header
+function Header({ title, onBack, rightEl, gradient = false }) {
+  return (
+    <div className={`sticky top-0 z-30 ${gradient ? 'bg-gradient-to-r from-blue-600 to-blue-500' : 'bg-white border-b border-gray-100'} shadow-sm`}>
+      <div className="flex items-center px-4 py-3.5 gap-3">
+        {onBack && (
+          <button onClick={onBack}
+            className={`w-9 h-9 rounded-full flex items-center justify-center ${gradient ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'} active:scale-90 transition-all`}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+        )}
+        <h1 className={`flex-1 text-base font-bold ${gradient ? 'text-white' : 'text-gray-900'} truncate`}>{title}</h1>
+        {rightEl}
+      </div>
+    </div>
+  );
+}
+
+// Card component
+function Card({ children, className = '', onClick }) {
+  return (
+    <div onClick={onClick}
+      className={`bg-white rounded-2xl shadow-sm border border-gray-100 ${onClick ? 'card-hover cursor-pointer' : ''} ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+// ── APP ROOT ───────────────────────────────────────────────────────────────
+function App() {
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('user')) || null; } catch { return null; }
+  });
+  const [stack, setStack] = useState(['menu']);
+
+  const screen = stack[stack.length - 1];
+  const navigate = (s) => setStack(prev => [...prev, s]);
+  const goBack   = () => setStack(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
+
+  const handleLogin = (u) => { localStorage.setItem('user', JSON.stringify(u)); setUser(u); setStack(['menu']); };
+  const handleLogout = () => { localStorage.removeItem('jwt'); localStorage.removeItem('user'); setUser(null); setStack(['menu']); };
+
+  if (!user) return <LoginScreen onLogin={handleLogin} />;
+
+  const props = { user, navigate, goBack };
+  const screens = {
+    menu:           <MenuScreen {...props} onLogout={handleLogout} />,
+    clockInOut:     <ClockInOutScreen {...props} />,
+    vehicleSheet:   <VehicleWorksheetScreen {...props} />,
+    schedule:       <ScheduleScreen {...props} />,
+    requestTimeOff: <RequestTimeOffScreen {...props} />,
+    messages:       <MessagesScreen {...props} />,
+    sendMessage:    <SendMessageScreen {...props} />,
+    workCompleted:  <WorkCompletedScreen {...props} />,
+    adminTimeOff:   <AdminTimeOffScreen {...props} />,
+  };
+  return screens[screen] || screens.menu;
+}
+
+// ── LOGIN ──────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [ToastEl, showToast]    = useToast();
+
+  const handleLogin = async () => {
+    if (!username || !password) return;
+    setLoading(true);
+    try {
+      const data = await apiFetch('/api/login', { method:'POST', body: JSON.stringify({ username: username.trim(), password }) });
+      localStorage.setItem('jwt', data.token);
+      onLogin(data.user);
+    } catch (e) {
+      showToast(e.message || 'Invalid credentials', 'error');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col" style={{background:'linear-gradient(160deg,#1e40af 0%,#2563eb 50%,#3b82f6 100%)'}}>
+      {ToastEl}
+
+      {/* Top decorative circles */}
+      <div className="absolute top-0 right-0 w-64 h-64 rounded-full opacity-10" style={{background:'white', transform:'translate(30%,-30%)'}} />
+      <div className="absolute top-20 left-0 w-40 h-40 rounded-full opacity-10" style={{background:'white', transform:'translate(-30%,0)'}} />
+
+      <div className="flex-1 flex flex-col justify-center px-6 py-10 relative">
+        {/* Logo + Title */}
+        <div className="text-center mb-10 bounce-in">
+          <div className="w-24 h-24 bg-white/20 rounded-3xl mx-auto mb-5 flex items-center justify-center shadow-2xl" style={{backdropFilter:'blur(10px)'}}>
+            <LogoIcon size={52} dark={false} />
+          </div>
+          <h1 className="text-4xl font-black text-white tracking-tight">Job Tracker</h1>
+          <p className="text-blue-200 text-sm mt-2 font-medium">Field Service Manager</p>
+        </div>
+
+        {/* Login card */}
+        <div className="glass rounded-3xl p-6 shadow-2xl fade-in" style={{animationDelay:'.1s'}}>
+          <h2 className="text-xl font-bold text-gray-800 mb-5">Sign In</h2>
+
+          <div className="space-y-4">
+            <Field label="Username">
+              <div className="relative">
+                <span className="absolute left-3.5 top-3.5 text-gray-400">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                </span>
+                <input className={iCls + ' pl-10'} type="text" placeholder="Enter username"
+                  value={username} onChange={e => setUsername(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()} autoCapitalize="none" autoCorrect="off" />
+              </div>
+            </Field>
+
+            <Field label="Password">
+              <div className="relative">
+                <span className="absolute left-3.5 top-3.5 text-gray-400">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+                <input className={iCls + ' pl-10 pr-12'} type={showPass ? 'text' : 'password'} placeholder="Enter password"
+                  value={password} onChange={e => setPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+                <button type="button" onClick={() => setShowPass(s => !s)}
+                  className="absolute right-3.5 top-3 text-gray-400 hover:text-gray-600">
+                  {showPass
+                    ? <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    : <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  }
+                </button>
+              </div>
+            </Field>
+          </div>
+
+          <PrimaryBtn onClick={handleLogin} disabled={!username || !password} loading={loading} className="mt-6">
+            Sign In
+          </PrimaryBtn>
+        </div>
+      </div>
+
+      <p className="text-center text-blue-300/60 text-xs pb-8 px-6">
+        © 2025 Job Tracker · Field Service Manager
+      </p>
+    </div>
+  );
+}
+
+// ── MENU ───────────────────────────────────────────────────────────────────
+const MENU_ITEMS = [
+  { label:'Clock In / Clock Out',    icon:'⏱', screen:'clockInOut',   desc:'Log your work hours with GPS',    color:'#eff6ff', accent:'#2563eb', iconBg:'#dbeafe' },
+  { label:'Vehicle Work Sheet',      icon:'🚗', screen:'vehicleSheet',  desc:'Create & manage worksheets',      color:'#f0fdf4', accent:'#16a34a', iconBg:'#dcfce7' },
+  { label:'Schedule',                icon:'📅', screen:'schedule',      desc:'View schedule & request time off', color:'#fff7ed', accent:'#ea580c', iconBg:'#fed7aa' },
+  { label:'Messages',                icon:'💬', screen:'messages',      desc:'Read & send messages',            color:'#fdf4ff', accent:'#9333ea', iconBg:'#f3e8ff' },
+  { label:'View Work Completed',     icon:'✅', screen:'workCompleted', desc:'Browse completed job records',    color:'#f0fdf4', accent:'#15803d', iconBg:'#bbf7d0' },
+];
+
+function MenuScreen({ user, navigate, onLogout }) {
+  const [unread, setUnread] = useState(0);
+  const firstName = user.name?.split(' ')[0] || 'there';
+
+  useEffect(() => {
+    apiFetch('/api/messages').then(msgs => {
+      setUnread(msgs.filter(m => m.toId === user.id && !m.read).length);
+    }).catch(() => {});
+  }, [user.id]);
+
+  const items = [
+    ...MENU_ITEMS,
+    ...(user.role === 'admin' ? [{ label:'Manage Time-Off', icon:'🗂', screen:'adminTimeOff', desc:'Approve or deny requests', color:'#fff1f2', accent:'#be123c', iconBg:'#fce7f3' }] : []),
+  ];
+
+  const todayStr = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+
+  return (
+    <div className="min-h-screen" style={{background:'#f0f4f8'}}>
+      {/* Header */}
+      <div style={{background:'linear-gradient(135deg,#1e40af,#3b82f6)'}} className="px-5 pt-10 pb-8 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-48 h-48 rounded-full opacity-10" style={{background:'white',transform:'translate(20%,-20%)'}} />
+        <div className="flex items-center justify-between relative">
+          <div>
+            <p className="text-blue-200 text-sm font-medium">{todayStr}</p>
+            <h1 className="text-white text-2xl font-black mt-0.5">Hi, {firstName} 👋</h1>
+            {user.role === 'admin' && (
+              <span className="inline-flex items-center gap-1 bg-white/20 text-white text-xs px-2.5 py-1 rounded-full font-semibold mt-2">
+                🛡 Admin
+              </span>
+            )}
+          </div>
+          <button onClick={onLogout}
+            className="bg-white/20 text-white text-xs font-bold px-4 py-2.5 rounded-2xl active:scale-90 transition-all border border-white/20">
+            Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Menu items */}
+      <div className="px-4 py-5 space-y-3 max-w-lg mx-auto">
+        {items.map((item, idx) => (
+          <button key={item.screen} onClick={() => navigate(item.screen)}
+            className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center gap-4 card-hover text-left fade-in"
+            style={{animationDelay:`${idx * 0.06}s`}}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 relative"
+              style={{background: item.iconBg}}>
+              {item.icon}
+              {item.screen === 'messages' && unread > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">{unread}</span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-gray-900 text-sm">{item.label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
+            </div>
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{background: item.iconBg}}>
+              <svg width="14" height="14" fill="none" stroke={item.accent} strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Logo footer */}
+      <div className="text-center pb-8 pt-2">
+        <div className="flex items-center justify-center gap-2 opacity-40">
+          <LogoIcon size={18} dark={true} />
+          <span className="text-xs font-bold text-gray-500">Job Tracker</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CLOCK IN/OUT ───────────────────────────────────────────────────────────
+function ClockInOutScreen({ user, goBack }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [geoMsg, setGeoMsg]   = useState('');
+  const [ToastEl, showToast]  = useToast();
+  const [now, setNow]         = useState(Date.now());
+
+  // Tick every second to drive the elapsed timer
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    apiFetch('/api/clock').then(d => { setRecords(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const today = new Date().toDateString();
+  // Filter strictly to current user's records for today
+  const todayRecords = records.filter(r => r.userId === user.id && r.date === today);
+  const sorted = [...todayRecords].sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+  const last = sorted[sorted.length - 1];
+  const isClockedIn = last?.type === 'in';
+
+  // Total completed sessions
+  let completedMs = 0;
+  for (let i = 0; i < sorted.length - 1; i += 2) {
+    if (sorted[i]?.type === 'in' && sorted[i+1]?.type === 'out')
+      completedMs += new Date(sorted[i+1].createdAt) - new Date(sorted[i].createdAt);
+  }
+  // Add current running session if clocked in
+  const clockInTime = isClockedIn ? new Date(last.createdAt).getTime() : 0;
+  const totalMs = completedMs + (isClockedIn ? Math.max(0, now - clockInTime) : 0);
+
+  const hrs  = Math.floor(totalMs / 3600000);
+  const mins = Math.floor((totalMs % 3600000) / 60000);
+  const secs = Math.floor((totalMs % 60000) / 1000);
+
+  const doRecord = async (type, geo) => {
+    try {
+      await apiFetch('/api/clock', { method:'POST', body: JSON.stringify({ type, time: new Date().toLocaleTimeString(), date: today, geo }) });
+      showToast(type === 'in' ? 'Clocked In successfully!' : 'Clocked Out successfully!', 'success');
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const handleClock = (type) => {
+    setGeoMsg('Getting location…');
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        p => { setGeoMsg(''); doRecord(type, { lat: p.coords.latitude.toFixed(5), lng: p.coords.longitude.toFixed(5) }); },
+        ()  => { setGeoMsg(''); doRecord(type, null); },
+        { timeout: 6000 }
+      );
+    } else { setGeoMsg(''); doRecord(type, null); }
+  };
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="Clock In / Out" onBack={goBack} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+
+        {/* Clock display */}
+        <Card className="p-6 text-center" style={{background: isClockedIn ? 'linear-gradient(135deg,#dcfce7,#f0fdf4)' : 'linear-gradient(135deg,#f8fafc,#f1f5f9)'}}>
+          <div className={`w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl shadow-lg ${isClockedIn ? 'bg-green-500 pulse-anim' : 'bg-gray-200'}`}>
+            {isClockedIn ? '🟢' : '⚫'}
+          </div>
+          {/* Elapsed timer — only ticks when clocked in, frozen when clocked out, zero for new users */}
+          <p className="text-3xl font-black text-gray-900 tabular-nums">
+            {String(hrs).padStart(2,'0')}:{String(mins).padStart(2,'0')}:{String(secs).padStart(2,'0')}
+          </p>
+          <p className="text-gray-500 text-sm mt-1 font-medium">
+            {isClockedIn ? 'Currently on the clock' : totalMs > 0 ? 'Clocked out' : 'Not clocked in today'}
+          </p>
+          {last && <p className="text-xs text-gray-400 mt-1">Last: Clock {last.type} at {last.time}</p>}
+        </Card>
+
+        {geoMsg && (
+          <div className="flex items-center gap-2 text-blue-600 text-sm bg-blue-50 rounded-xl px-4 py-2.5">
+            <Spinner size={16} /> <span>{geoMsg}</span>
+          </div>
+        )}
+
+        {/* Clock In / Out buttons */}
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => !isClockedIn && handleClock('in')} disabled={isClockedIn}
+            className={`rounded-2xl p-5 text-center font-bold text-sm transition-all active:scale-95 shadow-lg ${!isClockedIn ? 'bg-green-500 text-white shadow-green-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'}`}>
+            <div className="text-3xl mb-2">⏰</div>
+            <div>Clock In</div>
+          </button>
+          <button onClick={() => isClockedIn && handleClock('out')} disabled={!isClockedIn}
+            className={`rounded-2xl p-5 text-center font-bold text-sm transition-all active:scale-95 shadow-lg ${isClockedIn ? 'bg-red-500 text-white shadow-red-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'}`}>
+            <div className="text-3xl mb-2">🏁</div>
+            <div>Clock Out</div>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 justify-center text-xs text-gray-400">
+          <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          GPS location is captured automatically
+        </div>
+
+        {loading && <div className="flex justify-center py-4"><Spinner /></div>}
+
+        {!loading && sorted.length > 0 && (
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50">
+              <p className="font-bold text-gray-800 text-sm">Today's Log</p>
+            </div>
+            {sorted.map((r, i) => (
+              <div key={r._id} className={`flex justify-between items-center px-4 py-3 ${i < sorted.length-1 ? 'border-b border-gray-50' : ''}`}>
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-2 h-2 rounded-full ${r.type === 'in' ? 'bg-green-500' : 'bg-red-500'}`} />
+                  <span className={`text-sm font-bold ${r.type === 'in' ? 'text-green-700' : 'text-red-600'}`}>
+                    Clock {r.type === 'in' ? 'In' : 'Out'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold text-gray-800">{r.time}</p>
+                  {r.geo && <p className="text-xs text-gray-400">📍 {r.geo.lat}, {r.geo.lng}</p>}
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ── VEHICLE WORKSHEET ──────────────────────────────────────────────────────
+function VehicleWorksheetScreen({ user, goBack }) {
+  const [sheets, setSheets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [view, setView]     = useState('list');
+  const [ToastEl, showToast] = useToast();
+  const fileRef = useRef(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    apiFetch('/api/worksheets').then(d => { setSheets(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const blank = () => ({ customer:'', date: new Date().toISOString().split('T')[0], vin:'', stock:'', year:'', make:'', model:'', color:'', photos:[], items: Array(5).fill(null).map(() => ({ service:'' })), notes:'' });
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+  const upd = (f, v) => setForm(p => ({ ...p, [f]: v }));
+
+  const handlePhotos = (e) => {
+    Array.from(e.target.files).forEach(file => {
+      if (form.photos.length >= 10) return;
+      const reader = new FileReader();
+      reader.onload = ev => setForm(f => ({ ...f, photos: [...f.photos, ev.target.result].slice(0,10) }));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiFetch('/api/worksheets', { method:'POST', body: JSON.stringify(form) });
+      showToast('Worksheet saved!');
+      setTimeout(() => { setView('list'); setForm(blank()); load(); }, 1200);
+    } catch (e) { showToast(e.message, 'error'); setSaving(false); }
+  };
+
+  const mySheets = user.role === 'admin' ? [...sheets] : sheets.filter(s => s.userId === user.id);
+  const models = form.make ? (MODELS[form.make] || []) : [];
+
+  if (view === 'list') return (
+    <Screen>
+      {ToastEl}
+      <Header title="Vehicle Work Sheet" onBack={goBack} />
+      <div className="px-4 py-5 space-y-3 max-w-lg mx-auto">
+        <PrimaryBtn onClick={() => setView('form')}>
+          <svg width="16" height="16" fill="none" stroke="white" strokeWidth="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Worksheet
+        </PrimaryBtn>
+        {loading && [1,2,3].map(i => <SkeletonCard key={i} />)}
+        {!loading && mySheets.length === 0 && (
+          <div className="py-16 text-center">
+            <div className="text-5xl mb-3">📋</div>
+            <p className="text-gray-400 font-medium">No worksheets yet</p>
+          </div>
+        )}
+        {mySheets.map((s, i) => (
+          <Card key={s._id} className="p-4 fade-in" style={{animationDelay:`${i*0.05}s`}}>
+            <div className="flex justify-between items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900">{s.customer}</p>
+                <p className="text-sm text-gray-600 mt-0.5">{s.year} {s.make} {s.model}</p>
+                <p className="text-xs text-gray-400 mt-0.5 font-mono">VIN: {s.vin}</p>
+                {user.role === 'admin' && <span className="inline-block text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold mt-1">{s.userName}</span>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">{s.date}</p>
+                <p className="text-xs font-semibold mt-1" style={{color:'#2563eb'}}>{s.color}</p>
+              </div>
+            </div>
+            {s.photos?.length > 0 && (
+              <div className="flex gap-1.5 mt-3">
+                {s.photos.slice(0,4).map((p,i) => <img key={i} src={p} className="w-12 h-12 object-cover rounded-xl border border-gray-100" />)}
+                {s.photos.length > 4 && <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-xs text-gray-500 font-bold">+{s.photos.length-4}</div>}
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+    </Screen>
+  );
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="New Worksheet" onBack={() => setView('list')} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+        <Card className="p-4 space-y-4">
+          <Field label="Customer"><Sel value={form.customer} onChange={e => upd('customer', e.target.value)}><option value="">Select customer…</option>{CUSTOMERS.map(c => <option key={c}>{c}</option>)}</Sel></Field>
+          <Field label="Date"><Inp type="date" value={form.date} onChange={e => upd('date', e.target.value)} /></Field>
+          <Field label="VIN">
+            <div className="flex gap-2">
+              <Inp type="text" placeholder="Enter VIN…" value={form.vin} onChange={e => upd('vin', e.target.value.toUpperCase())} style={{fontFamily:'monospace'}} />
+              <button onClick={() => fileRef.current?.click()} className="bg-gray-100 border border-gray-200 rounded-xl px-3.5 text-xl flex-shrink-0 active:scale-90 transition-all">📷</button>
+            </div>
+          </Field>
+          <Field label="Stock #"><Inp type="text" placeholder="Stock number" value={form.stock} onChange={e => upd('stock', e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Year"><Sel value={form.year} onChange={e => upd('year', e.target.value)}><option value="">Year</option>{YEARS.map(y => <option key={y}>{y}</option>)}</Sel></Field>
+            <Field label="Color"><Sel value={form.color} onChange={e => upd('color', e.target.value)}><option value="">Color</option>{COLORS.map(c => <option key={c}>{c}</option>)}</Sel></Field>
+          </div>
+          <Field label="Make"><Sel value={form.make} onChange={e => { upd('make', e.target.value); upd('model',''); }}><option value="">Select make…</option>{MAKES.map(m => <option key={m}>{m}</option>)}</Sel></Field>
+          <Field label="Model"><Sel value={form.model} onChange={e => upd('model', e.target.value)} disabled={!form.make}><option value="">Select model…</option>{models.map(m => <option key={m}>{m}</option>)}</Sel></Field>
+
+          <Field label={`Photos (${form.photos.length}/10)`}>
+            <input ref={fileRef} type="file" accept="image/*" multiple capture="environment" onChange={handlePhotos} className="hidden" />
+            <div className="flex flex-wrap gap-2">
+              {form.photos.map((p,i) => (
+                <div key={i} className="relative">
+                  <img src={p} className="w-16 h-16 object-cover rounded-xl border border-gray-100" />
+                  <button onClick={() => setForm(f => ({ ...f, photos: f.photos.filter((_,j) => j!==i) }))} className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center shadow font-bold">×</button>
+                </div>
+              ))}
+              {form.photos.length < 10 && (
+                <button onClick={() => fileRef.current?.click()} className="w-16 h-16 border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center text-2xl text-gray-400 active:scale-90 transition-all">+</button>
+              )}
+            </div>
+          </Field>
+
+          <Field label="Services">
+            <div className="space-y-2">
+              {form.items.map((item, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-gray-400 w-5 text-center">{i+1}</span>
+                  <Sel value={item.service} onChange={e => { const items = form.items.map((it,j) => j===i ? {service: e.target.value} : it); upd('items', items); }}>
+                    <option value="">Select service…</option>
+                    {SERVICES.map(s => <option key={s}>{s}</option>)}
+                  </Sel>
+                </div>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Notes">
+            <textarea className={iCls + ' h-24 resize-none'} placeholder="Additional notes…" value={form.notes} onChange={e => upd('notes', e.target.value)} />
+          </Field>
+
+          <PrimaryBtn onClick={save} disabled={!form.customer} loading={saving} className="bg-green-600 shadow-green-600/30">
+            Save Worksheet
+          </PrimaryBtn>
+        </Card>
+      </div>
+    </Screen>
+  );
+}
+
+// ── SCHEDULE ───────────────────────────────────────────────────────────────
+function ScheduleScreen({ user, navigate, goBack }) {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch('/api/timeoff').then(d => { setRequests(d.filter(r => r.userId === user.id)); setLoading(false); }).catch(() => setLoading(false));
+  }, [user.id]);
+
+  const today = new Date();
+  const dow = today.getDay();
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - dow);
+  const week = Array.from({ length:7 }, (_, i) => { const d = new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; });
+  const DAY = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+  return (
+    <Screen>
+      <Header title="Schedule" onBack={goBack} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+
+        {/* Week strip */}
+        <Card className="p-4">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">This Week</p>
+          <div className="flex gap-1.5">
+            {week.map((d, i) => {
+              const isToday = d.toDateString() === today.toDateString();
+              return (
+                <div key={i} className={`flex-1 rounded-2xl py-2.5 text-center transition-all ${isToday ? 'shadow-lg shadow-blue-200' : ''}`}
+                  style={{background: isToday ? 'linear-gradient(135deg,#2563eb,#3b82f6)' : '#f8fafc'}}>
+                  <div className={`text-xs font-semibold ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>{DAY[i]}</div>
+                  <div className={`text-sm font-black mt-0.5 ${isToday ? 'text-white' : 'text-gray-700'}`}>{d.getDate()}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Days off card */}
+        <Card className="p-4 flex items-center justify-between" style={{background:'linear-gradient(135deg,#eff6ff,#f0f9ff)'}}>
+          <div>
+            <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Allowed Days Off</p>
+            <p className="text-3xl font-black text-blue-700 mt-0.5">{user.allowedDaysOff ?? 10}</p>
+            <p className="text-xs text-blue-400 mt-0.5">days remaining</p>
+          </div>
+          <div className="text-4xl">🏖️</div>
+        </Card>
+
+        <SecondaryBtn onClick={() => navigate('requestTimeOff')}>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Request Time Off
+        </SecondaryBtn>
+
+        {loading && <SkeletonCard />}
+        {!loading && requests.length > 0 && (
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50">
+              <p className="font-bold text-gray-800 text-sm">My Requests</p>
+            </div>
+            {[...requests].reverse().map((r, i) => (
+              <div key={r._id} className={`flex justify-between items-center px-4 py-3 ${i < requests.length-1 ? 'border-b border-gray-50' : ''}`}>
+                <div>
+                  <p className="text-sm font-bold text-gray-800">{r.requestDate}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{r.reason}</p>
+                </div>
+                <span className={`text-xs px-3 py-1 rounded-full font-bold ${r.status === 'approved' ? 'bg-green-100 text-green-700' : r.status === 'denied' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {r.status === 'approved' ? '✓ Approved' : r.status === 'denied' ? '✗ Denied' : '⏳ Pending'}
+                </span>
+              </div>
+            ))}
+          </Card>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ── REQUEST TIME OFF ───────────────────────────────────────────────────────
+function RequestTimeOffScreen({ user, goBack }) {
+  const [date, setDate]     = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [ToastEl, showToast] = useToast();
+
+  const submit = async () => {
+    if (!date || !reason) return;
+    setSaving(true);
+    try {
+      await apiFetch('/api/timeoff', { method:'POST', body: JSON.stringify({ requestDate: date, reason }) });
+      showToast('Request submitted!');
+      setTimeout(goBack, 1400);
+    } catch (e) { showToast(e.message, 'error'); setSaving(false); }
+  };
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="Request Time Off" onBack={goBack} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+        <Card className="p-4 flex items-center gap-3" style={{background:'linear-gradient(135deg,#eff6ff,#f0f9ff)'}}>
+          <div className="text-3xl">📋</div>
+          <div>
+            <p className="font-bold text-blue-800 text-sm">Allowed Days Off</p>
+            <p className="text-blue-600 text-xs mt-0.5">{user.allowedDaysOff ?? 10} days · Set by Admin</p>
+          </div>
+        </Card>
+
+        <Card className="p-4 space-y-4">
+          <Field label="Request Date">
+            <Inp type="date" value={date} onChange={e => setDate(e.target.value)} min={new Date().toISOString().split('T')[0]} />
+          </Field>
+          <Field label="Reason">
+            <Sel value={reason} onChange={e => setReason(e.target.value)}>
+              <option value="">Select reason…</option>
+              {TIME_OFF_REASONS.map(r => <option key={r}>{r}</option>)}
+            </Sel>
+          </Field>
+          <PrimaryBtn onClick={submit} disabled={!date || !reason} loading={saving}>Submit Request</PrimaryBtn>
+        </Card>
+      </div>
+    </Screen>
+  );
+}
+
+// ── ADMIN TIME OFF ─────────────────────────────────────────────────────────
+function AdminTimeOffScreen({ goBack }) {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [ToastEl, showToast]    = useToast();
+
+  const load = useCallback(() => {
+    apiFetch('/api/timeoff').then(d => { setRequests(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const update = async (id, status) => {
+    try {
+      await apiFetch(`/api/timeoff/${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
+      showToast(`Request ${status}!`);
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const pending = requests.filter(r => r.status === 'pending');
+  const decided = requests.filter(r => r.status !== 'pending');
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="Time-Off Requests" onBack={goBack} />
+      <div className="px-4 py-5 space-y-3 max-w-lg mx-auto">
+        {loading && [1,2].map(i => <SkeletonCard key={i} />)}
+        {!loading && pending.length === 0 && decided.length === 0 && (
+          <div className="py-16 text-center"><div className="text-5xl mb-3">🏖️</div><p className="text-gray-400 font-medium">No requests yet</p></div>
+        )}
+        {pending.length > 0 && (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-amber-400 rounded-full" />
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Pending ({pending.length})</p>
+            </div>
+            {pending.map(r => (
+              <Card key={r._id} className="p-4">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">{r.userName}</p>
+                    <p className="text-sm text-gray-600">{r.requestDate}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{r.reason}</p>
+                  </div>
+                  <span className="bg-amber-100 text-amber-700 text-xs px-2.5 py-1 rounded-full font-bold">Pending</span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => update(r._id, 'approved')} className="flex-1 py-2.5 bg-green-500 text-white rounded-xl text-sm font-bold active:scale-95 transition-all shadow-sm">✓ Approve</button>
+                  <button onClick={() => update(r._id, 'denied')} className="flex-1 py-2.5 bg-red-500 text-white rounded-xl text-sm font-bold active:scale-95 transition-all shadow-sm">✗ Deny</button>
+                </div>
+              </Card>
+            ))}
+          </>
+        )}
+        {decided.length > 0 && (
+          <>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mt-2">Decided</p>
+            {decided.map(r => (
+              <Card key={r._id} className="p-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">{r.userName}</p>
+                    <p className="text-sm text-gray-600">{r.requestDate} · {r.reason}</p>
+                  </div>
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${r.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {r.status === 'approved' ? '✓ Approved' : '✗ Denied'}
+                  </span>
+                </div>
+              </Card>
+            ))}
+          </>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ── MESSAGES ───────────────────────────────────────────────────────────────
+function MessagesScreen({ user, navigate, goBack }) {
+  const [allMsgs, setAllMsgs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab]         = useState('inbox');
+
+  const load = useCallback(() => {
+    apiFetch('/api/messages').then(d => { setAllMsgs(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const inbox  = allMsgs.filter(m => m.toId === user.id);
+  const sent   = allMsgs.filter(m => m.fromId === user.id);
+  const unread = inbox.filter(m => !m.read).length;
+  const list   = tab === 'inbox' ? [...inbox] : [...sent];
+
+  const markRead = async (id) => {
+    try {
+      await apiFetch(`/api/messages/${id}/read`, { method:'PATCH' });
+      setAllMsgs(prev => prev.map(m => m._id === id ? { ...m, read:true } : m));
+    } catch {}
+  };
+
+  return (
+    <Screen>
+      <Header title="Messages" onBack={goBack}
+        rightEl={
+          <button onClick={() => navigate('sendMessage')}
+            className="bg-blue-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl active:scale-90 transition-all flex items-center gap-1.5">
+            <svg width="13" height="13" fill="none" stroke="white" strokeWidth="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New
+          </button>
+        }
+      />
+      <div className="px-4 py-4 max-w-lg mx-auto space-y-3">
+        {/* Tab switcher */}
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-2xl">
+          {[['inbox', `Inbox${unread > 0 ? ` (${unread})` : ''}`], ['sent', 'Sent']].map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${tab === key ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {loading && [1,2,3].map(i => <SkeletonCard key={i} />)}
+        {!loading && list.length === 0 && (
+          <div className="py-16 text-center"><div className="text-5xl mb-3">💬</div><p className="text-gray-400 font-medium">No messages</p></div>
+        )}
+        {list.map((m, i) => <MessageCard key={m._id} msg={m} isInbox={tab === 'inbox'} onRead={markRead} idx={i} />)}
+      </div>
+    </Screen>
+  );
+}
+
+function MessageCard({ msg, isInbox, onRead, idx = 0 }) {
+  const [open, setOpen] = useState(false);
+  const toggle = () => { setOpen(o => !o); if (isInbox && !msg.read) onRead(msg._id); };
+  return (
+    <Card onClick={toggle} className={`overflow-hidden fade-in ${isInbox && !msg.read ? 'border-blue-200' : ''}`} style={{animationDelay:`${idx*0.05}s`}}>
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm flex-shrink-0 ${isInbox && !msg.read ? 'bg-blue-500' : 'bg-gray-300'}`}>
+            {(isInbox ? msg.fromName : msg.toName)?.[0]?.toUpperCase() || '?'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-bold text-gray-900 truncate">
+                {isInbox ? msg.fromName : msg.toName}
+              </p>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {isInbox && !msg.read && <span className="w-2 h-2 bg-blue-500 rounded-full" />}
+                <svg width="12" height="12" fill="none" stroke="#9ca3af" strokeWidth="2.5" viewBox="0 0 24 24">
+                  {open ? <polyline points="18 15 12 9 6 15"/> : <polyline points="6 9 12 15 18 9"/>}
+                </svg>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">{new Date(msg.createdAt).toLocaleString()}</p>
+          </div>
+        </div>
+        {open && (
+          <div className="mt-3 pt-3 border-t border-gray-100 text-sm text-gray-700 leading-relaxed fade-in">
+            {msg.body}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ── SEND MESSAGE ───────────────────────────────────────────────────────────
+function SendMessageScreen({ user, goBack }) {
+  const [users, setUsers]   = useState([]);
+  const [toId, setToId]     = useState('');
+  const [body, setBody]     = useState('');
+  const [sending, setSending] = useState(false);
+  const [ToastEl, showToast] = useToast();
+
+  useEffect(() => { apiFetch('/api/users').then(d => setUsers(d.filter(u => u._id !== user.id))).catch(() => {}); }, [user.id]);
+
+  const send = async () => {
+    if (!toId || !body.trim()) return;
+    setSending(true);
+    const toUser = users.find(u => u._id === toId);
+    try {
+      await apiFetch('/api/messages', { method:'POST', body: JSON.stringify({ toId, toName: toUser?.name, body: body.trim() }) });
+      showToast('Message sent!');
+      setTimeout(goBack, 1400);
+    } catch (e) { showToast(e.message, 'error'); setSending(false); }
+  };
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="New Message" onBack={goBack} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+        <Card className="p-4 space-y-4">
+          <Field label="To">
+            <Sel value={toId} onChange={e => setToId(e.target.value)}>
+              <option value="">Select recipient…</option>
+              {users.map(u => <option key={u._id} value={u._id}>{u.name} ({u.role})</option>)}
+            </Sel>
+          </Field>
+          <Field label="Message">
+            <textarea className={iCls + ' h-40 resize-none'} placeholder="Type your message…" value={body} onChange={e => setBody(e.target.value)} />
+          </Field>
+          <PrimaryBtn onClick={send} disabled={!toId || !body.trim()} loading={sending}>
+            <svg width="16" height="16" fill="none" stroke="white" strokeWidth="2.5" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send Message
+          </PrimaryBtn>
+        </Card>
+      </div>
+    </Screen>
+  );
+}
+
+// ── WORK COMPLETED ─────────────────────────────────────────────────────────
+function WorkCompletedScreen({ goBack }) {
+  const [sheets, setSheets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [from, setFrom]     = useState('');
+  const [to, setTo]         = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/api/worksheets').then(d => { setSheets(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+
+  const filtered = sheets.filter(s => {
+    if (from && s.date < from) return false;
+    if (to   && s.date > to)   return false;
+    return true;
+  });
+
+  return (
+    <Screen>
+      <Header title="Work Completed" onBack={goBack} />
+      <div className="px-4 py-5 space-y-3 max-w-lg mx-auto">
+
+        {/* Date filter */}
+        <Card className="p-3">
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">From</label>
+              <Inp type="date" value={from} onChange={e => setFrom(e.target.value)} />
+            </div>
+            <div className="text-gray-300 pb-3 font-bold">–</div>
+            <div className="flex-1">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">To</label>
+              <Inp type="date" value={to} onChange={e => setTo(e.target.value)} />
+            </div>
+            {(from || to) && (
+              <button onClick={() => { setFrom(''); setTo(''); }} className="text-xs text-blue-500 font-bold pb-3 flex-shrink-0">Clear</button>
+            )}
+          </div>
+        </Card>
+
+        {loading && [1,2,3].map(i => <SkeletonCard key={i} />)}
+
+        {!loading && (
+          <>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+              {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+            </p>
+            {filtered.length === 0
+              ? <div className="py-16 text-center"><div className="text-5xl mb-3">📁</div><p className="text-gray-400 font-medium">No records found</p></div>
+              : filtered.map((s, i) => (
+                <Card key={s._id} onClick={() => setExpanded(expanded === s._id ? null : s._id)} className="overflow-hidden fade-in" style={{animationDelay:`${i*0.05}s`}}>
+                  <div className="p-4">
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-gray-900 text-sm">{s.customer}</span>
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">{s.color}</span>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-0.5">{s.year} {s.make} {s.model}</p>
+                        <p className="text-xs text-gray-400 font-mono mt-0.5">VIN: {s.vin}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-lg font-semibold">{s.date}</p>
+                        <p className="text-xs text-purple-600 font-semibold mt-1">{s.userName}</p>
+                      </div>
+                    </div>
+
+                    {expanded === s._id && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2 fade-in">
+                        {s.items?.filter(i => i.service).length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1.5">Services</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {s.items.filter(i => i.service).map((i, j) => (
+                                <span key={j} className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{i.service}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {s.photos?.length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1.5">Photos</p>
+                            <div className="flex gap-2 flex-wrap">
+                              {s.photos.map((p, j) => <img key={j} src={p} className="w-14 h-14 object-cover rounded-xl border border-gray-100" />)}
+                            </div>
+                          </div>
+                        )}
+                        {s.notes && <p className="text-xs text-gray-500 bg-gray-50 rounded-xl p-2">{s.notes}</p>}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              ))
+            }
+          </>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+// ── MOUNT ──────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
