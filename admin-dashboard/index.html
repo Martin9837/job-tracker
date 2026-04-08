@@ -127,6 +127,8 @@ function UsersTab({ showToast }) {
   const [saving, setSaving] = useState(false);
   const [newCred, setNewCred] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [resetting, setResetting] = useState(null);
+  const [resetResult, setResetResult] = useState(null);
 
   const load = useCallback(() => {
     apiFetch('/api/users').then(d => { setUsers(d); setLoading(false); }).catch(() => setLoading(false));
@@ -157,15 +159,37 @@ function UsersTab({ showToast }) {
     setDeleting(null);
   };
 
+  const resetPassword = async (id, name) => {
+    if (!confirm(`Reset password for ${name}? A new temporary password will be generated.`)) return;
+    setResetting(id);
+    try {
+      const res = await apiFetch(`/api/users/${id}/reset-password`, { method:'POST' });
+      setResetResult({ name, password: res.newPassword, username: users.find(u=>u._id===id)?.username });
+    } catch (e) { showToast(e.message, 'error'); }
+    setResetting(null);
+  };
+
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
     <div className="space-y-6 fade-in">
       <SectionHead title="Users" sub="Add or remove technicians and admins" />
 
+      {/* Reset Password Result */}
+      {resetResult && (
+        <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-xl p-4 fade-in">
+          <p className="text-yellow-300 font-semibold text-sm mb-2">🔑 Password reset for {resetResult.name}. Share new credentials:</p>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">Username</p><p className="text-white font-mono">{resetResult.username}</p></div>
+            <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">New Password</p><p className="text-white font-mono">{resetResult.password}</p></div>
+          </div>
+          <button onClick={() => setResetResult(null)} className="mt-2 text-slate-500 hover:text-white text-xs">Dismiss</button>
+        </div>
+      )}
+
       {/* Add User Form */}
       <Card className="p-5">
-        <h3 className="text-white font-semibold mb-4 flex items-center gap-2">➕ Add User / Send Invite</h3>
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2">➕ Add New User</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <Fld label="First Name"><Inp placeholder="First" value={form.firstName} onChange={e => upd('firstName', e.target.value)} /></Fld>
           <Fld label="Last Name"><Inp placeholder="Last" value={form.lastName} onChange={e => upd('lastName', e.target.value)} /></Fld>
@@ -179,12 +203,12 @@ function UsersTab({ showToast }) {
           </Fld>
         </div>
         <Btn onClick={addUser} disabled={saving || !form.firstName || !form.lastName || !form.email}>
-          {saving ? <><Spinner size="sm" /> Adding…</> : '➕ Add User & Send Invite'}
+          {saving ? <><Spinner size="sm" /> Adding…</> : '➕ Add User'}
         </Btn>
 
         {newCred && (
           <div className="mt-4 bg-green-900/30 border border-green-700/50 rounded-xl p-4">
-            <p className="text-green-300 font-semibold text-sm mb-2">✓ User created! Share these credentials:</p>
+            <p className="text-green-300 font-semibold text-sm mb-2">✓ User created! Share these login credentials:</p>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">Username</p><p className="text-white font-mono">{newCred.user?.username}</p></div>
               <div className="bg-slate-900/50 rounded-lg p-2"><p className="text-slate-400 text-xs">Password</p><p className="text-white font-mono">{newCred.generatedPassword}</p></div>
@@ -198,7 +222,7 @@ function UsersTab({ showToast }) {
       {/* User List */}
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-700/50 flex items-center justify-between">
-          <h3 className="text-white font-semibold text-sm">Remove User</h3>
+          <h3 className="text-white font-semibold text-sm">Manage Users</h3>
           <Badge color="blue">{users.length} users</Badge>
         </div>
         {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
@@ -208,10 +232,16 @@ function UsersTab({ showToast }) {
                 <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-700 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0">{u.name?.[0]}</div>
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-medium">{u.name}</p>
-                  <p className="text-slate-400 text-xs">{u.email} · {u.telephone || 'No phone'}</p>
+                  <p className="text-slate-400 text-xs">{u.username} · {u.email || 'No email'} · {u.telephone || 'No phone'}</p>
                 </div>
                 <Badge color={u.role === 'admin' ? 'purple' : 'blue'}>{u.role}</Badge>
+                <button onClick={() => resetPassword(u._id, u.name)} disabled={resetting === u._id}
+                  title="Reset Password"
+                  className="w-8 h-8 rounded-lg bg-yellow-900/30 hover:bg-yellow-700 text-yellow-400 hover:text-white transition-all disabled:opacity-30 flex items-center justify-center text-sm">
+                  {resetting === u._id ? <Spinner size="sm" /> : '🔑'}
+                </button>
                 <button onClick={() => removeUser(u._id, u.name)} disabled={deleting === u._id || u.username === 'admin'}
+                  title="Remove User"
                   className="w-8 h-8 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all disabled:opacity-30 flex items-center justify-center text-sm">
                   {deleting === u._id ? <Spinner size="sm" /> : '🗑️'}
                 </button>
@@ -465,80 +495,153 @@ function CustomersTab({ showToast }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 4. SCHEDULE TAB
 // ══════════════════════════════════════════════════════════════════════════
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAY_FULL  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
 function ScheduleTab({ showToast }) {
   const [schedule, setSchedule] = useState([]);
   const [users, setUsers] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const blank = { userId:'', userName:'', date:'', startTime:'', endTime:'', notes:'' };
+  const blank = { userId:'', customerId:'', days:[], startDate:'', endDate:'', recurring:false, notes:'' };
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
+  const [viewMode, setViewMode] = useState('tech'); // 'tech' | 'account'
 
   const load = useCallback(() => {
-    Promise.all([apiFetch('/api/schedule'), apiFetch('/api/users')]).then(([s, u]) => {
-      setSchedule(s); setUsers(u.filter(x => x.role === 'worker')); setLoading(false);
+    Promise.all([apiFetch('/api/schedule'), apiFetch('/api/users'), apiFetch('/api/customers')]).then(([s, u, c]) => {
+      setSchedule(s);
+      setUsers(u.filter(x => x.role === 'worker'));
+      setCustomers(c);
+      setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const toggleDay = (d) => setForm(f => ({
+    ...f, days: f.days.includes(d) ? f.days.filter(x=>x!==d) : [...f.days, d]
+  }));
 
-  const createShift = async () => {
-    if (!form.userId || !form.date || !form.startTime || !form.endTime) return;
+  const createEntry = async () => {
+    if (!form.userId || !form.customerId || form.days.length === 0 || !form.startDate) return;
     setSaving(true);
     try {
-      await apiFetch('/api/schedule', { method:'POST', body: JSON.stringify(form) });
-      showToast('Shift created!'); setForm(blank); load();
+      const u = users.find(x=>x._id===form.userId);
+      const c = customers.find(x=>x._id===form.customerId);
+      await apiFetch('/api/schedule', { method:'POST', body: JSON.stringify({
+        ...form,
+        userName: u?.name || '',
+        customerName: c?.name || '',
+      })});
+      showToast('Schedule entry created!');
+      setForm(blank);
+      load();
     } catch (e) { showToast(e.message, 'error'); }
     setSaving(false);
   };
 
-  const deleteShift = async (id) => {
-    try { await apiFetch(`/api/schedule/${id}`, { method:'DELETE' }); showToast('Shift deleted'); load(); }
+  const deleteEntry = async (id) => {
+    try { await apiFetch(`/api/schedule/${id}`, { method:'DELETE' }); showToast('Deleted'); load(); }
     catch (e) { showToast(e.message, 'error'); }
   };
 
-  const grouped = schedule.reduce((acc, s) => { (acc[s.date] = acc[s.date]||[]).push(s); return acc; }, {});
-  const dates = Object.keys(grouped).sort();
+  // Group by tech or account
+  const grouped = schedule.reduce((acc, s) => {
+    const key = viewMode === 'tech' ? (s.userName || s.userId) : (s.customerName || s.customerId);
+    (acc[key] = acc[key]||[]).push(s);
+    return acc;
+  }, {});
+
+  const formatDays = (days) => days.slice().sort((a,b)=>a-b).map(d=>DAY_NAMES[d]).join(', ');
 
   return (
     <div className="space-y-5 fade-in">
-      <SectionHead title="Create Schedule" sub="Assign shifts to technicians" />
+      <SectionHead title="Schedule" sub="Assign technicians to accounts by day" />
 
+      {/* Create Form */}
       <Card className="p-5">
-        <h3 className="text-white font-semibold mb-4">➕ New Shift</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <h3 className="text-white font-semibold mb-4">➕ Create Schedule Entry</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
           <Fld label="Technician">
-            <Sel value={form.userId} onChange={e => { const u=users.find(x=>x._id===e.target.value); upd('userId', e.target.value); upd('userName', u?.name||''); }}>
+            <Sel value={form.userId} onChange={e => setForm(f=>({...f, userId:e.target.value}))}>
               <option value="">Select tech…</option>
               {users.map(u => <option key={u._id} value={u._id}>{u.name}</option>)}
             </Sel>
           </Fld>
-          <Fld label="Date"><Inp type="date" value={form.date} onChange={e => upd('date', e.target.value)} /></Fld>
-          <Fld label="Start Time"><Inp type="time" value={form.startTime} onChange={e => upd('startTime', e.target.value)} /></Fld>
-          <Fld label="End Time"><Inp type="time" value={form.endTime} onChange={e => upd('endTime', e.target.value)} /></Fld>
-          <Fld label="Notes (optional)"><Inp placeholder="Any special notes…" value={form.notes} onChange={e => upd('notes', e.target.value)} /></Fld>
+          <Fld label="Account / Customer">
+            <Sel value={form.customerId} onChange={e => setForm(f=>({...f, customerId:e.target.value}))}>
+              <option value="">Select account…</option>
+              {customers.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </Sel>
+          </Fld>
+          <Fld label="Start Date"><Inp type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} /></Fld>
+          <Fld label="End Date (optional)"><Inp type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} /></Fld>
         </div>
-        <Btn onClick={createShift} disabled={saving || !form.userId || !form.date || !form.startTime || !form.endTime}>
-          {saving ? <><Spinner size="sm"/>Saving…</> : '📅 Create Shift'}
-        </Btn>
+
+        <Fld label="Days of the Week">
+          <div className="flex gap-2 flex-wrap mt-1">
+            {DAY_NAMES.map((d,i) => (
+              <button key={i} type="button" onClick={() => toggleDay(i)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${form.days.includes(i) ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-700/40 border-slate-600 text-slate-400 hover:border-slate-400'}`}>
+                {d}
+              </button>
+            ))}
+          </div>
+        </Fld>
+
+        <div className="flex items-center gap-3 mt-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <div onClick={() => setForm(f=>({...f, recurring:!f.recurring}))}
+              className={`w-10 h-6 rounded-full transition-all flex items-center px-0.5 ${form.recurring ? 'bg-blue-600' : 'bg-slate-600'}`}>
+              <div className={`w-5 h-5 rounded-full bg-white transition-transform ${form.recurring ? 'translate-x-4' : 'translate-x-0'}`} />
+            </div>
+            <span className="text-slate-300 text-sm">Recurring (repeat weekly)</span>
+          </label>
+        </div>
+
+        <div className="mt-3">
+          <Fld label="Notes (optional)"><Inp placeholder="Any notes…" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} /></Fld>
+        </div>
+
+        <div className="mt-4">
+          <Btn onClick={createEntry} disabled={saving || !form.userId || !form.customerId || form.days.length === 0 || !form.startDate}>
+            {saving ? <><Spinner size="sm"/>Saving…</> : '📅 Create Schedule Entry'}
+          </Btn>
+        </div>
       </Card>
+
+      {/* View Toggle */}
+      <div className="flex gap-2">
+        {[['tech','By Technician'],['account','By Account']].map(([key,label])=>(
+          <button key={key} onClick={()=>setViewMode(key)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${viewMode===key?'bg-blue-600 text-white':'bg-slate-800 text-slate-400 hover:text-white'}`}>{label}</button>
+        ))}
+      </div>
 
       {loading ? <div className="flex justify-center py-8"><Spinner /></div> : (
         <div className="space-y-4">
-          {dates.length === 0 && <Card className="p-5"><EmptyState msg="No shifts scheduled yet" /></Card>}
-          {dates.map(date => (
-            <Card key={date} className="overflow-hidden">
-              <div className="px-5 py-3 border-b border-slate-700/50 bg-slate-700/20">
-                <p className="text-white font-semibold text-sm">{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })}</p>
+          {Object.keys(grouped).length === 0 && <Card className="p-5"><EmptyState msg="No schedule entries yet" /></Card>}
+          {Object.entries(grouped).map(([groupKey, entries]) => (
+            <Card key={groupKey} className="overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-700/50 bg-slate-700/20 flex items-center gap-2">
+                <span className="text-lg">{viewMode==='tech'?'👤':'🏢'}</span>
+                <p className="text-white font-semibold text-sm">{groupKey}</p>
+                <Badge color="blue">{entries.length}</Badge>
               </div>
-              {grouped[date].map(s => (
-                <div key={s._id} className="flex items-center gap-3 px-5 py-3 border-b border-slate-700/20 last:border-0 hover:bg-slate-700/20">
-                  <div className="w-8 h-8 bg-blue-900/50 rounded-full flex items-center justify-center font-bold text-blue-300 text-sm flex-shrink-0">{s.userName?.[0]}</div>
-                  <div className="flex-1">
-                    <p className="text-white text-sm font-medium">{s.userName}</p>
-                    <p className="text-slate-400 text-xs">{s.startTime} – {s.endTime}{s.notes && ` · ${s.notes}`}</p>
+              {entries.map(s => (
+                <div key={s._id} className="flex items-start gap-3 px-5 py-3 border-b border-slate-700/20 last:border-0 hover:bg-slate-700/20">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-white text-sm font-medium">{viewMode==='tech' ? s.customerName : s.userName}</p>
+                      {s.recurring && <Badge color="purple">🔁 Recurring</Badge>}
+                    </div>
+                    <p className="text-blue-300 text-xs font-medium mt-0.5">{formatDays(s.days)}</p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      From {s.startDate}{s.endDate ? ` → ${s.endDate}` : ''}
+                      {s.notes && ` · ${s.notes}`}
+                    </p>
                   </div>
-                  <button onClick={() => deleteShift(s._id)} className="w-7 h-7 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all flex items-center justify-center text-xs">✕</button>
+                  <button onClick={() => deleteEntry(s._id)} className="w-7 h-7 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all flex items-center justify-center text-xs flex-shrink-0 mt-0.5">✕</button>
                 </div>
               ))}
             </Card>
@@ -552,70 +655,200 @@ function ScheduleTab({ showToast }) {
 // ══════════════════════════════════════════════════════════════════════════
 // 5. TIME SHEETS TAB
 // ══════════════════════════════════════════════════════════════════════════
-function TimeSheetsTab() {
+function TimeSheetsTab({ showToast }) {
   const [users, setUsers] = useState([]);
   const [records, setRecords] = useState([]);
   const [selectedUser, setSelectedUser] = useState('');
   const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [punchModal, setPunchModal] = useState(null); // null | { mode:'add'|'edit', record? }
+  const [punchForm, setPunchForm] = useState({ type:'in', time:'', date:'' });
+  const [punchSaving, setPunchSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([apiFetch('/api/users'), apiFetch('/api/clock')]).then(([u, c]) => {
       setUsers(u.filter(x => x.role === 'worker')); setRecords(c); setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+  useEffect(() => { load(); }, [load]);
 
   const userRecords = selectedUser
-    ? records.filter(r => r.userId === selectedUser || r.userName === users.find(u=>u._id===selectedUser)?.name)
+    ? records.filter(r => String(r.userId) === selectedUser)
     : [];
 
-  // Group by date
-  const grouped = userRecords.reduce((acc, r) => { (acc[r.date]=acc[r.date]||[]).push(r); return acc; }, {});
+  const filtered = userRecords.filter(r => {
+    if (dateFrom && r.date < dateFrom) return false;
+    if (dateTo && r.date > dateTo) return false;
+    return true;
+  });
+
+  const grouped = filtered.reduce((acc, r) => { (acc[r.date]=acc[r.date]||[]).push(r); return acc; }, {});
   const dates = Object.keys(grouped).sort((a,b) => new Date(b)-new Date(a));
 
-  // Compute hours per date
-  const getHours = (recs) => {
+  const getHoursMs = (recs) => {
     const sorted = [...recs].sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
     let ms = 0;
     for (let i = 0; i < sorted.length-1; i+=2) {
       if (sorted[i]?.type==='in' && sorted[i+1]?.type==='out')
         ms += new Date(sorted[i+1].createdAt) - new Date(sorted[i].createdAt);
     }
-    return ms > 0 ? (ms/3600000).toFixed(2) : null;
+    return ms;
   };
+
+  const totalHours = dates.reduce((sum, d) => sum + getHoursMs(grouped[d]), 0) / 3600000;
+
+  const openAdd = () => {
+    setPunchForm({ type:'in', time:'', date: new Date().toISOString().split('T')[0] });
+    setPunchModal({ mode:'add' });
+  };
+
+  const openEdit = (r) => {
+    setPunchForm({ type: r.type, time: r.time, date: r.date });
+    setPunchModal({ mode:'edit', record: r });
+  };
+
+  const savePunch = async () => {
+    if (!punchForm.time || !punchForm.date) return;
+    setPunchSaving(true);
+    try {
+      if (punchModal.mode === 'add') {
+        const u = users.find(x=>x._id===selectedUser);
+        await apiFetch('/api/clock/manual', { method:'POST', body: JSON.stringify({
+          userId: selectedUser, userName: u?.name||'', type: punchForm.type, time: punchForm.time, date: punchForm.date
+        })});
+        showToast('Punch added!');
+      } else {
+        await apiFetch(`/api/clock/${punchModal.record._id}`, { method:'PATCH', body: JSON.stringify({
+          type: punchForm.type, time: punchForm.time, date: punchForm.date
+        })});
+        showToast('Punch updated!');
+      }
+      setPunchModal(null); load();
+    } catch (e) { showToast(e.message, 'error'); }
+    setPunchSaving(false);
+  };
+
+  const deletePunch = async (id) => {
+    if (!confirm('Delete this punch record?')) return;
+    setDeleting(id);
+    try { await apiFetch(`/api/clock/${id}`, { method:'DELETE' }); showToast('Deleted'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+    setDeleting(null);
+  };
+
+  const geoLink = (geo) => geo?.lat && geo?.lng
+    ? `https://maps.google.com/?q=${geo.lat},${geo.lng}`
+    : null;
 
   return (
     <div className="space-y-5 fade-in">
-      <SectionHead title="View Time Sheets" sub="Check clock in/out records by employee" />
+      <SectionHead title="Time Sheets" sub="Clock in/out records, totals, and manual edits" />
 
-      <Card className="p-5">
+      {/* Punch Modal */}
+      {punchModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={e=>e.target===e.currentTarget&&setPunchModal(null)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-sm space-y-4 fade-in">
+            <h3 className="text-white font-bold text-lg">{punchModal.mode==='add'?'Add Manual Punch':'Edit Punch'}</h3>
+            <Fld label="Type">
+              <Sel value={punchForm.type} onChange={e=>setPunchForm(f=>({...f,type:e.target.value}))}>
+                <option value="in">Clock In</option>
+                <option value="out">Clock Out</option>
+              </Sel>
+            </Fld>
+            <Fld label="Date"><Inp type="date" value={punchForm.date} onChange={e=>setPunchForm(f=>({...f,date:e.target.value}))} /></Fld>
+            <Fld label="Time"><Inp type="time" value={punchForm.time} onChange={e=>setPunchForm(f=>({...f,time:e.target.value}))} /></Fld>
+            <div className="flex gap-2 pt-1">
+              <Btn onClick={savePunch} disabled={punchSaving||!punchForm.time||!punchForm.date}>{punchSaving?<><Spinner size="sm"/>Saving…</>:'✓ Save'}</Btn>
+              <Btn onClick={()=>setPunchModal(null)} variant="ghost">Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <Card className="p-5 space-y-3">
         <Fld label="Select Employee">
           <Sel value={selectedUser} onChange={e => setSelectedUser(e.target.value)}>
             <option value="">— Choose a technician —</option>
             {users.map(u => <option key={u._id} value={u._id}>{u.name}</option>)}
           </Sel>
         </Fld>
+        {selectedUser && (
+          <div className="grid grid-cols-2 gap-3">
+            <Fld label="From Date"><Inp type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} /></Fld>
+            <Fld label="To Date"><Inp type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} /></Fld>
+          </div>
+        )}
       </Card>
 
       {loading && <div className="flex justify-center py-8"><Spinner /></div>}
 
       {!loading && selectedUser && (
         <>
-          {dates.length === 0 && <Card className="p-5"><EmptyState msg="No clock records for this employee" /></Card>}
+          {/* Summary + Add button */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              {totalHours > 0 && <Badge color="green">Total: {totalHours.toFixed(2)} hrs ({dates.length} days)</Badge>}
+            </div>
+            <Btn onClick={openAdd} size="sm">➕ Add Manual Punch</Btn>
+          </div>
+
+          {/* Daily summary table */}
+          {dates.length > 0 && (
+            <Card className="overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-700/50">
+                <p className="text-white font-semibold text-sm">Daily Summary</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-slate-700/60">{['Date','Hours'].map(h=><th key={h} className="text-left px-5 py-2.5 text-slate-400 font-semibold text-xs uppercase">{h}</th>)}</tr></thead>
+                <tbody>
+                  {dates.map(d => {
+                    const ms = getHoursMs(grouped[d]);
+                    const hrs = ms > 0 ? (ms/3600000).toFixed(2) : '—';
+                    return (
+                      <tr key={d} className="border-b border-slate-700/20 hover:bg-slate-700/10">
+                        <td className="px-5 py-2 text-white">{d}</td>
+                        <td className="px-5 py-2"><Badge color={ms>0?'green':'gray'}>{hrs}{ms>0?' hrs':''}</Badge></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Detailed punch records */}
+          {dates.length === 0 && <Card className="p-5"><EmptyState msg="No clock records for this employee in the selected range" /></Card>}
           {dates.map(date => {
-            const hrs = getHours(grouped[date]);
+            const ms = getHoursMs(grouped[date]);
             return (
               <Card key={date} className="overflow-hidden">
                 <div className="px-5 py-3 border-b border-slate-700/50 flex items-center justify-between">
                   <p className="text-white font-semibold text-sm">{date}</p>
-                  {hrs && <Badge color="green">{hrs} hrs</Badge>}
+                  {ms > 0 && <Badge color="green">{(ms/3600000).toFixed(2)} hrs</Badge>}
                 </div>
-                {grouped[date].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).map(r => (
-                  <div key={r._id} className="flex items-center gap-3 px-5 py-2.5 border-b border-slate-700/20 last:border-0">
-                    <span className={`text-sm font-semibold w-20 ${r.type==='in'?'text-green-400':'text-red-400'}`}>Clock {r.type==='in'?'In':'Out'}</span>
-                    <span className="text-slate-300 text-sm font-mono">{r.time}</span>
-                    {r.geo && <span className="text-slate-500 text-xs">📍 {r.geo.lat}, {r.geo.lng}</span>}
-                  </div>
-                ))}
+                {grouped[date].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).map(r => {
+                  const link = geoLink(r.geo);
+                  return (
+                    <div key={r._id} className="flex items-center gap-3 px-5 py-2.5 border-b border-slate-700/20 last:border-0 hover:bg-slate-700/10">
+                      <span className={`text-xs font-bold w-16 ${r.type==='in'?'text-green-400':'text-red-400'}`}>
+                        {r.type==='in'?'▶ IN':'■ OUT'}
+                      </span>
+                      <span className="text-slate-300 text-sm font-mono w-16">{r.time}</span>
+                      {link
+                        ? <a href={link} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1">📍 View Map</a>
+                        : r.geo?.lat ? <span className="text-slate-500 text-xs">📍 {r.geo.lat}, {r.geo.lng}</span> : null
+                      }
+                      <div className="flex-1" />
+                      <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white transition-all flex items-center justify-center text-xs">✏️</button>
+                      <button onClick={() => deletePunch(r._id)} disabled={deleting===r._id} className="w-7 h-7 rounded-lg bg-red-900/30 hover:bg-red-700 text-red-400 hover:text-white transition-all flex items-center justify-center text-xs disabled:opacity-30">
+                        {deleting===r._id?<Spinner size="sm"/>:'✕'}
+                      </button>
+                    </div>
+                  );
+                })}
               </Card>
             );
           })}
@@ -757,6 +990,7 @@ function WorkLogTab() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selectedTechs, setSelectedTechs] = useState({});
+  const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
     Promise.all([apiFetch('/api/worksheets'), apiFetch('/api/users')]).then(([s, u]) => {
@@ -799,6 +1033,16 @@ function WorkLogTab() {
 
   return (
     <div className="space-y-5 fade-in">
+      {/* Lightbox */}
+      {lightbox && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
+          <div className="relative max-w-4xl max-h-full">
+            <img src={lightbox} alt="Work log photo" className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl" />
+            <button onClick={() => setLightbox(null)} className="absolute top-2 right-2 w-9 h-9 bg-black/60 hover:bg-black/90 text-white rounded-full flex items-center justify-center text-lg font-bold transition-all">×</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <SectionHead title="View Work Log" sub={`${filtered.length} records`} />
         <Btn onClick={exportCSV} variant="success" disabled={filtered.length===0}>📤 Export Data (CSV)</Btn>
@@ -850,8 +1094,8 @@ function WorkLogTab() {
                       <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{s.model}</td>
                       <td className="px-4 py-2.5 text-slate-400">{s.color}</td>
                       <td className="px-4 py-2.5 text-slate-500 max-w-[160px] truncate">{(s.items||[]).filter(i=>i.service).map(i=>i.service).join(', ')||'—'}</td>
-                      <td className="px-4 py-2.5">{s.photos?.[0]?<img src={s.photos[0]} className="w-10 h-10 object-cover rounded-lg" alt=""/>:<span className="text-slate-600">—</span>}</td>
-                      <td className="px-4 py-2.5">{s.photos?.[1]?<img src={s.photos[1]} className="w-10 h-10 object-cover rounded-lg" alt=""/>:<span className="text-slate-600">—</span>}</td>
+                      <td className="px-4 py-2.5">{s.photos?.[0]?<img src={s.photos[0]} onClick={()=>setLightbox(s.photos[0])} className="w-10 h-10 object-cover rounded-lg cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-blue-400 transition-all" alt=""/>:<span className="text-slate-600">—</span>}</td>
+                      <td className="px-4 py-2.5">{s.photos?.[1]?<img src={s.photos[1]} onClick={()=>setLightbox(s.photos[1])} className="w-10 h-10 object-cover rounded-lg cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-blue-400 transition-all" alt=""/>:<span className="text-slate-600">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1038,7 +1282,7 @@ function Dashboard({ user, onLogout }) {
       case 'vehicle':    return <VehicleTab showToast={showToast} />;
       case 'customers':  return <CustomersTab showToast={showToast} />;
       case 'schedule':   return <ScheduleTab showToast={showToast} />;
-      case 'timesheets': return <TimeSheetsTab />;
+      case 'timesheets': return <TimeSheetsTab showToast={showToast} />;
       case 'timeoff':    return <TimeOffTab showToast={showToast} />;
       case 'worklog':    return <WorkLogTab />;
       case 'messages':   return <MessagesTab adminUser={user} showToast={showToast} onUnreadChange={setUnread} />;

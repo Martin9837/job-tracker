@@ -4,6 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Job Tracker</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#2563eb" />
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Job Tracker" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="152x152" href="/icon-152.png" />
+  <link rel="apple-touch-icon" sizes="167x167" href="/icon-167.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
+
+  <!-- Splash screens for iPhone -->
+  <meta name="msapplication-TileColor" content="#2563eb" />
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -231,6 +247,8 @@ function App() {
     sendMessage:    <SendMessageScreen {...props} />,
     workCompleted:  <WorkCompletedScreen {...props} />,
     adminTimeOff:   <AdminTimeOffScreen {...props} />,
+    changePassword: <ChangePasswordScreen {...props} />,
+    searchVehicle:  <SearchVehicleScreen {...props} />,
   };
   return screens[screen] || screens.menu;
 }
@@ -324,11 +342,13 @@ function LoginScreen({ onLogin }) {
 
 // ── MENU ───────────────────────────────────────────────────────────────────
 const MENU_ITEMS = [
-  { label:'Clock In / Clock Out',    icon:'⏱', screen:'clockInOut',   desc:'Log your work hours with GPS',    color:'#eff6ff', accent:'#2563eb', iconBg:'#dbeafe' },
-  { label:'Vehicle Work Sheet',      icon:'🚗', screen:'vehicleSheet',  desc:'Create & manage worksheets',      color:'#f0fdf4', accent:'#16a34a', iconBg:'#dcfce7' },
-  { label:'Schedule',                icon:'📅', screen:'schedule',      desc:'View schedule & request time off', color:'#fff7ed', accent:'#ea580c', iconBg:'#fed7aa' },
-  { label:'Messages',                icon:'💬', screen:'messages',      desc:'Read & send messages',            color:'#fdf4ff', accent:'#9333ea', iconBg:'#f3e8ff' },
-  { label:'View Work Completed',     icon:'✅', screen:'workCompleted', desc:'Browse completed job records',    color:'#f0fdf4', accent:'#15803d', iconBg:'#bbf7d0' },
+  { label:'Clock In / Clock Out',    icon:'⏱', screen:'clockInOut',    desc:'Log your work hours with GPS',       color:'#eff6ff', accent:'#2563eb', iconBg:'#dbeafe' },
+  { label:'Vehicle Work Sheet',      icon:'🚗', screen:'vehicleSheet',  desc:'Create & manage worksheets',         color:'#f0fdf4', accent:'#16a34a', iconBg:'#dcfce7' },
+  { label:'Schedule',                icon:'📅', screen:'schedule',      desc:'View schedule & request time off',   color:'#fff7ed', accent:'#ea580c', iconBg:'#fed7aa' },
+  { label:'Search Vehicle',          icon:'🔍', screen:'searchVehicle', desc:'Search by VIN or stock number',      color:'#f0f9ff', accent:'#0284c7', iconBg:'#e0f2fe' },
+  { label:'Messages',                icon:'💬', screen:'messages',      desc:'Read & send messages',               color:'#fdf4ff', accent:'#9333ea', iconBg:'#f3e8ff' },
+  { label:'View Work Completed',     icon:'✅', screen:'workCompleted', desc:'Browse completed job records',       color:'#f0fdf4', accent:'#15803d', iconBg:'#bbf7d0' },
+  { label:'Change Password',         icon:'🔑', screen:'changePassword',desc:'Update your account password',       color:'#fefce8', accent:'#b45309', iconBg:'#fef3c7' },
 ];
 
 function MenuScreen({ user, navigate, onLogout }) {
@@ -683,19 +703,35 @@ function VehicleWorksheetScreen({ user, goBack }) {
 }
 
 // ── SCHEDULE ───────────────────────────────────────────────────────────────
+const SCHED_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
 function ScheduleScreen({ user, navigate, goBack }) {
   const [requests, setRequests] = useState([]);
+  const [schedule, setSchedule] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch('/api/timeoff').then(d => { setRequests(d.filter(r => r.userId === user.id)); setLoading(false); }).catch(() => setLoading(false));
+    Promise.all([
+      apiFetch('/api/timeoff'),
+      apiFetch('/api/schedule'),
+    ]).then(([t, s]) => {
+      setRequests(t.filter(r => r.userId === user.id));
+      setSchedule(s);
+      setLoading(false);
+    }).catch(() => setLoading(false));
   }, [user.id]);
 
   const today = new Date();
+  const todayDow = today.getDay();
   const dow = today.getDay();
   const weekStart = new Date(today); weekStart.setDate(today.getDate() - dow);
   const week = Array.from({ length:7 }, (_, i) => { const d = new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; });
   const DAY = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+  // Find schedule entries that apply today (day of week matches)
+  const todayAssignments = schedule.filter(s => s.days && s.days.includes(todayDow));
+  // All upcoming assignments (any day this week)
+  const weekAssignments = schedule.filter(s => s.days && s.days.some(d => week.some(wd => wd.getDay() === d)));
 
   return (
     <Screen>
@@ -708,16 +744,69 @@ function ScheduleScreen({ user, navigate, goBack }) {
           <div className="flex gap-1.5">
             {week.map((d, i) => {
               const isToday = d.toDateString() === today.toDateString();
+              const hasWork = schedule.some(s => s.days && s.days.includes(i));
               return (
                 <div key={i} className={`flex-1 rounded-2xl py-2.5 text-center transition-all ${isToday ? 'shadow-lg shadow-blue-200' : ''}`}
                   style={{background: isToday ? 'linear-gradient(135deg,#2563eb,#3b82f6)' : '#f8fafc'}}>
                   <div className={`text-xs font-semibold ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>{DAY[i]}</div>
                   <div className={`text-sm font-black mt-0.5 ${isToday ? 'text-white' : 'text-gray-700'}`}>{d.getDate()}</div>
+                  {hasWork && !isToday && <div className="w-1.5 h-1.5 bg-orange-400 rounded-full mx-auto mt-1" />}
                 </div>
               );
             })}
           </div>
         </Card>
+
+        {/* Today's assignments */}
+        {!loading && todayAssignments.length > 0 && (
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50 flex items-center gap-2">
+              <span className="text-base">📍</span>
+              <p className="font-bold text-gray-800 text-sm">Today's Assignment{todayAssignments.length > 1 ? 's' : ''}</p>
+            </div>
+            {todayAssignments.map((s, i) => (
+              <div key={s._id} className={`px-4 py-3 ${i < todayAssignments.length-1 ? 'border-b border-gray-50' : ''}`}>
+                <p className="font-black text-gray-900 text-sm">{s.customerName}</p>
+                <p className="text-xs text-orange-500 font-semibold mt-0.5">
+                  {s.days.sort().map(d => SCHED_DAYS[d]).join(' · ')}
+                  {s.recurring ? ' · 🔁 Recurring' : ''}
+                </p>
+                {s.notes && <p className="text-xs text-gray-400 mt-0.5">{s.notes}</p>}
+              </div>
+            ))}
+          </Card>
+        )}
+
+        {/* Full schedule */}
+        {!loading && schedule.length > 0 && (
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-50">
+              <p className="font-bold text-gray-800 text-sm">My Schedule</p>
+            </div>
+            {schedule.map((s, i) => (
+              <div key={s._id} className={`px-4 py-3 ${i < schedule.length-1 ? 'border-b border-gray-50' : ''}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-900 text-sm">{s.customerName}</p>
+                    <p className="text-xs text-blue-600 font-semibold mt-0.5">{s.days.sort().map(d => SCHED_DAYS[d]).join(', ')}</p>
+                    {s.startDate && <p className="text-xs text-gray-400 mt-0.5">From {s.startDate}{s.endDate ? ` → ${s.endDate}` : ''}</p>}
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    {s.recurring && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold">🔁</span>}
+                  </div>
+                </div>
+                {s.notes && <p className="text-xs text-gray-400 italic mt-1">{s.notes}</p>}
+              </div>
+            ))}
+          </Card>
+        )}
+
+        {!loading && schedule.length === 0 && (
+          <div className="py-8 text-center">
+            <div className="text-4xl mb-2">📅</div>
+            <p className="text-gray-400 text-sm">No schedule assigned yet</p>
+          </div>
+        )}
 
         {/* Days off card */}
         <Card className="p-4 flex items-center justify-between" style={{background:'linear-gradient(135deg,#eff6ff,#f0f9ff)'}}>
@@ -738,7 +827,7 @@ function ScheduleScreen({ user, navigate, goBack }) {
         {!loading && requests.length > 0 && (
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-50">
-              <p className="font-bold text-gray-800 text-sm">My Requests</p>
+              <p className="font-bold text-gray-800 text-sm">My Time-Off Requests</p>
             </div>
             {[...requests].reverse().map((r, i) => (
               <div key={r._id} className={`flex justify-between items-center px-4 py-3 ${i < requests.length-1 ? 'border-b border-gray-50' : ''}`}>
@@ -1121,8 +1210,249 @@ function WorkCompletedScreen({ goBack }) {
   );
 }
 
+// ── CHANGE PASSWORD ────────────────────────────────────────────────────────
+function ChangePasswordScreen({ user, goBack }) {
+  const [form, setForm] = useState({ currentPassword:'', newPassword:'', confirmPassword:'' });
+  const [loading, setLoading] = useState(false);
+  const [ToastEl, showToast] = useToast();
+
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.currentPassword || !form.newPassword || !form.confirmPassword) return showToast('All fields are required', 'error');
+    if (form.newPassword.length < 6) return showToast('New password must be at least 6 characters', 'error');
+    if (form.newPassword !== form.confirmPassword) return showToast('New passwords do not match', 'error');
+    setLoading(true);
+    try {
+      await apiFetch('/api/users/me/change-password', { method:'POST', body: JSON.stringify({ currentPassword: form.currentPassword, newPassword: form.newPassword }) });
+      showToast('Password changed successfully!', 'success');
+      setForm({ currentPassword:'', newPassword:'', confirmPassword:'' });
+    } catch (e) { showToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="Change Password" onBack={goBack} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+        <Card className="p-5 space-y-4">
+          <div className="flex items-center gap-3 pb-2 border-b border-gray-100">
+            <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-2xl">🔑</div>
+            <div>
+              <p className="font-bold text-gray-900">Update Password</p>
+              <p className="text-xs text-gray-400">Choose a strong password</p>
+            </div>
+          </div>
+
+          <Field label="Current Password">
+            <Inp type="password" placeholder="••••••••" value={form.currentPassword} onChange={e => upd('currentPassword', e.target.value)} />
+          </Field>
+          <Field label="New Password">
+            <Inp type="password" placeholder="Min. 6 characters" value={form.newPassword} onChange={e => upd('newPassword', e.target.value)} />
+          </Field>
+          <Field label="Confirm New Password">
+            <Inp type="password" placeholder="Repeat new password" value={form.confirmPassword} onChange={e => upd('confirmPassword', e.target.value)} />
+          </Field>
+
+          {form.newPassword && form.confirmPassword && form.newPassword !== form.confirmPassword && (
+            <p className="text-xs text-red-500 font-semibold">Passwords do not match</p>
+          )}
+
+          <PrimaryBtn onClick={submit} loading={loading}
+            disabled={!form.currentPassword || !form.newPassword || !form.confirmPassword || form.newPassword !== form.confirmPassword}>
+            🔑 Change Password
+          </PrimaryBtn>
+        </Card>
+      </div>
+    </Screen>
+  );
+}
+
+// ── SEARCH VEHICLE ─────────────────────────────────────────────────────────
+function SearchVehicleScreen({ user, goBack }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+  const [ToastEl, showToast] = useToast();
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  const search = async (q) => {
+    const term = (q || query).trim();
+    if (!term) return;
+    setLoading(true); setSearched(false);
+    try {
+      const sheets = await apiFetch('/api/worksheets');
+      const lower = term.toLowerCase();
+      const found = sheets.filter(s =>
+        (s.vin && s.vin.toLowerCase().includes(lower)) ||
+        (s.stock && s.stock.toLowerCase().includes(lower))
+      );
+      setResults(found);
+      setSearched(true);
+    } catch (e) { showToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const stopScanner = () => {
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    setScanning(false);
+  };
+
+  const startScanner = async () => {
+    if (!('BarcodeDetector' in window)) {
+      showToast('Barcode scanning not supported on this browser. Try entering VIN manually.', 'info');
+      return;
+    }
+    setScanning(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'environment' } });
+      streamRef.current = stream;
+      setTimeout(() => {
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      }, 100);
+      const detector = new BarcodeDetector({ formats: ['code_39','code_128','qr_code','data_matrix','pdf417'] });
+      const interval = setInterval(async () => {
+        if (!videoRef.current || !streamRef.current) { clearInterval(interval); return; }
+        try {
+          const codes = await detector.detect(videoRef.current);
+          if (codes.length > 0) {
+            clearInterval(interval);
+            const vin = codes[0].rawValue;
+            stopScanner();
+            setQuery(vin);
+            search(vin);
+          }
+        } catch {}
+      }, 500);
+    } catch (e) {
+      showToast('Camera access denied', 'error');
+      setScanning(false);
+    }
+  };
+
+  useEffect(() => () => stopScanner(), []);
+
+  return (
+    <Screen>
+      {ToastEl}
+      <Header title="Search Vehicle" onBack={() => { stopScanner(); goBack(); }} />
+      <div className="px-4 py-5 space-y-4 max-w-lg mx-auto">
+
+        {/* Scanner viewfinder */}
+        {scanning && (
+          <Card className="overflow-hidden">
+            <div className="relative bg-black" style={{paddingBottom:'60%'}}>
+              <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="border-2 border-blue-400 rounded-xl opacity-80" style={{width:'70%',height:'40%'}} />
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 p-3 text-center">
+                <p className="text-white text-xs font-semibold">Point camera at VIN barcode</p>
+              </div>
+            </div>
+            <div className="p-3">
+              <SecondaryBtn onClick={stopScanner}>✕ Cancel Scan</SecondaryBtn>
+            </div>
+          </Card>
+        )}
+
+        {/* Search bar */}
+        {!scanning && (
+          <Card className="p-4 space-y-3">
+            <Field label="VIN or Stock Number">
+              <div className="flex gap-2">
+                <Inp
+                  placeholder="Enter VIN or stock #..."
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && search()}
+                  className="flex-1"
+                />
+                <button onClick={startScanner}
+                  className="w-12 h-12 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl flex items-center justify-center text-lg active:scale-90 transition-all flex-shrink-0"
+                  title="Scan barcode">
+                  📷
+                </button>
+              </div>
+            </Field>
+            <PrimaryBtn onClick={() => search()} loading={loading} disabled={!query.trim()}>
+              🔍 Search
+            </PrimaryBtn>
+          </Card>
+        )}
+
+        {/* Results */}
+        {!loading && searched && (
+          <>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+              {results.length} result{results.length !== 1 ? 's' : ''} found
+            </p>
+            {results.length === 0
+              ? <div className="py-12 text-center"><div className="text-5xl mb-3">🔍</div><p className="text-gray-400">No matching vehicle records</p></div>
+              : results.map((s, i) => (
+                <Card key={s._id} onClick={() => setExpanded(expanded === s._id ? null : s._id)}
+                  className="overflow-hidden fade-in" style={{animationDelay:`${i*0.05}s`}}>
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-black text-gray-900 text-sm">{s.year} {s.make} {s.model}</p>
+                        <p className="text-xs text-gray-500 font-mono mt-0.5">VIN: {s.vin || '—'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Stock: {s.stock || '—'} · {s.color}</p>
+                        <p className="text-xs text-blue-600 font-semibold mt-0.5">{s.customer}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-lg font-semibold">{s.date}</p>
+                        <p className="text-xs text-purple-600 font-semibold mt-1">{s.userName}</p>
+                      </div>
+                    </div>
+                    {expanded === s._id && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2 fade-in">
+                        {s.items?.filter(i => i.service).length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1.5">Services</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {s.items.filter(i => i.service).map((i, j) => (
+                                <span key={j} className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{i.service}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {s.photos?.length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1.5">Photos</p>
+                            <div className="flex gap-2 flex-wrap">
+                              {s.photos.map((p, j) => <img key={j} src={p} className="w-14 h-14 object-cover rounded-xl border border-gray-100" />)}
+                            </div>
+                          </div>
+                        )}
+                        {s.notes && <p className="text-xs text-gray-500 bg-gray-50 rounded-xl p-2">{s.notes}</p>}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              ))
+            }
+          </>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
 // ── MOUNT ──────────────────────────────────────────────────────────────────
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>
